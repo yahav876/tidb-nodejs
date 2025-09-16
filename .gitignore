@@ -28,9 +28,19 @@ consumer/node_modules/
 *~
 .DS_Store
 
-# Data directory - ignore all data files
-data/
-data/**/*
+# Data directory - ignore all data files but keep directory structure
+data/*
+!data/*/
+data/*/*
+!data/*/*/
+data/*/*/*
+!data/*/*/*/
+data/*/*/*/*
+!data/*/*/*/*/
+data/*/*/*/*/*
+!data/*/*/*/*/*/
+# Keep .gitkeep files to preserve directory structure
+!data/**/.gitkeep
 *.dat
 *.db
 *.sqlite
