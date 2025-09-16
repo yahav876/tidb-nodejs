@@ -32,9 +32,14 @@ TiDB → TiCDC → Kafka (3-broker cluster) → Node.js Consumer → Prometheus/
 # Start all services
 docker-compose up -d
 
+# Wait for all services to be healthy (about 60 seconds)
+sleep 60
+
 # Verify services are healthy
 docker-compose ps
 ```
+
+**Note**: The system includes automatic data cleanup on startup to ensure clean initialization. The TiDB cluster may take 30-60 seconds to fully bootstrap on first run.
 
 ### 2. Generate Test CDC Events
 
@@ -190,8 +195,11 @@ curl -s http://localhost:8300/api/v1/changefeeds/tidb-kafka-changefeed | jq
 
 ### Reset Everything
 ```bash
-# Stop and remove all containers
+# Stop and remove all containers and volumes
 docker-compose down -v
+
+# Clean up any remaining data
+rm -rf data/pd0/pd0 data/tikv0/tikv0
 
 # Start fresh
 docker-compose up -d
@@ -199,16 +207,23 @@ docker-compose up -d
 
 ### Common Issues
 
-1. **No UPDATE events showing**: The consumer detects UPDATEs based on email patterns containing "updated_" or "mass_update_"
+1. **TiDB container unhealthy on startup**: This usually means old TiKV data exists. Solution:
+   ```bash
+   docker-compose down
+   rm -rf data/pd0/pd0 data/tikv0/tikv0
+   docker-compose up -d
+   ```
 
-2. **Consumer not connecting to Kafka**: Ensure the consumer is on the correct Docker network
+2. **No UPDATE events showing**: The consumer detects UPDATEs based on email patterns containing "updated_" or "mass_update_"
+
+3. **Consumer not connecting to Kafka**: Ensure the consumer is on the correct Docker network
    ```bash
    docker-compose restart nodejs-consumer
    ```
 
-3. **No data in Grafana**: Wait 10-15 seconds after generating events for data to propagate
+4. **No data in Grafana**: Wait 10-15 seconds after generating events for data to propagate
 
-4. **Elasticsearch not receiving logs**: Check Filebeat configuration
+5. **Elasticsearch not receiving logs**: Check Filebeat configuration
    ```bash
    docker-compose logs filebeat
    ```

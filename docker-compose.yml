@@ -11,6 +11,8 @@ services:
         rm -rf /cleanup-data/kafka2/* || true
         rm -rf /cleanup-data/kafka3/* || true
         rm -rf /cleanup-data/zookeeper/* || true
+        rm -rf /cleanup-data/pd0/pd0 || true
+        rm -rf /cleanup-data/tikv0/tikv0 || true
         echo "✅ Data cleanup completed"
       '
     restart: "no"
@@ -33,6 +35,9 @@ services:
       - --advertise-client-urls=http://pd0:2379
       - --advertise-peer-urls=http://pd0:2380
       - --initial-cluster=pd0=http://pd0:2380
+    depends_on:
+      data-cleanup:
+        condition: service_completed_successfully
     restart: on-failure
     networks:
       - tidb-network
@@ -47,7 +52,10 @@ services:
       - --data-dir=/data/tikv0
       - --pd=pd0:2379
     depends_on:
-      - pd0
+      data-cleanup:
+        condition: service_completed_successfully
+      pd0:
+        condition: service_started
     restart: on-failure
     networks:
       - tidb-network
