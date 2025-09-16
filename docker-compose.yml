@@ -1,0 +1,385 @@
+services:
+  # Data Cleanup Service (runs first to clean up any previous data)
+  data-cleanup:
+    image: alpine:latest
+    volumes:
+      - ./data:/cleanup-data
+    command: |
+      sh -c '
+        echo "🧹 Cleaning up previous data..."
+        rm -rf /cleanup-data/kafka1/* || true
+        rm -rf /cleanup-data/kafka2/* || true
+        rm -rf /cleanup-data/kafka3/* || true
+        rm -rf /cleanup-data/zookeeper/* || true
+        echo "✅ Data cleanup completed"
+      '
+    restart: "no"
+    networks:
+      - tidb-network
+
+  # TiDB Database Cluster
+  pd0:
+    image: pingcap/pd:v7.5.7
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    volumes:
+      - ./data/pd0:/data
+    command:
+      - --name=pd0
+      - --data-dir=/data/pd0
+      - --client-urls=http://0.0.0.0:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-client-urls=http://pd0:2379
+      - --advertise-peer-urls=http://pd0:2380
+      - --initial-cluster=pd0=http://pd0:2380
+    restart: on-failure
+    networks:
+      - tidb-network
+
+  tikv0:
+    image: pingcap/tikv:v7.5.6-20250903-8ddf40d
+    volumes:
+      - ./data/tikv0:/data
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv0:20160
+      - --data-dir=/data/tikv0
+      - --pd=pd0:2379
+    depends_on:
+      - pd0
+    restart: on-failure
+    networks:
+      - tidb-network
+
+  tidb:
+    image: pingcap/tidb:v7.5.7
+    ports:
+      - "4000:4000"
+      - "10080:10080"
+    volumes:
+      - ./config/tidb.toml:/tidb.toml
+    command:
+      - --store=tikv
+      - --path=pd0:2379
+      - --advertise-address=tidb
+      - --config=/tidb.toml
+    depends_on:
+      - tikv0
+      - pd0
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:10080/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - tidb-network
+
+  # TiCDC for Change Data Capture
+  ticdc:
+    image: pingcap/ticdc:v7.5.7
+    ports:
+      - "8300:8300"
+    volumes:
+      - ./config/ticdc:/config
+      - ./logs/ticdc:/logs
+    command:
+      - /cdc
+      - server
+      - --addr=0.0.0.0:8300
+      - --advertise-addr=ticdc:8300
+      - --pd=http://pd0:2379
+      - --log-file=/logs/ticdc.log
+      - --log-level=info
+    depends_on:
+      tidb:
+        condition: service_healthy
+      kafka1:
+        condition: service_healthy
+      kafka2:
+        condition: service_healthy
+      kafka3:
+        condition: service_healthy
+    restart: on-failure
+    networks:
+      - tidb-network
+
+  # Apache Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    depends_on:
+      data-cleanup:
+        condition: service_completed_successfully
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - ./data/zookeeper:/var/lib/zookeeper/data
+    networks:
+      - tidb-network
+
+  kafka1:
+    image: confluentinc/cp-kafka:7.4.0
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: 'false'
+    volumes:
+      - ./data/kafka1:/var/lib/kafka/data
+    depends_on:
+      data-cleanup:
+        condition: service_completed_successfully
+      zookeeper:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - tidb-network
+
+  kafka2:
+    image: confluentinc/cp-kafka:7.4.0
+    ports:
+      - "9093:9092"
+      - "29093:29093"
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka2:9092,PLAINTEXT_HOST://localhost:29093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29093
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: 'false'
+    volumes:
+      - ./data/kafka2:/var/lib/kafka/data
+    depends_on:
+      data-cleanup:
+        condition: service_completed_successfully
+      zookeeper:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - tidb-network
+
+  kafka3:
+    image: confluentinc/cp-kafka:7.4.0
+    ports:
+      - "9094:9092"
+      - "29094:29094"
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka3:9092,PLAINTEXT_HOST://localhost:29094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29094
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: 'false'
+    volumes:
+      - ./data/kafka3:/var/lib/kafka/data
+    depends_on:
+      data-cleanup:
+        condition: service_completed_successfully
+      zookeeper:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - tidb-network
+
+  # Node.js Consumer Application
+  nodejs-consumer:
+    build:
+      context: ./consumer
+      dockerfile: Dockerfile
+    environment:
+      - KAFKA_BROKERS=kafka1:9092,kafka2:9092,kafka3:9092
+      - TIDB_HOST=tidb
+      - TIDB_PORT=4000
+      - TIDB_USER=root
+      - TIDB_PASSWORD=
+      - TIDB_DATABASE=testdb
+      - PROMETHEUS_PORT=3001
+    ports:
+      - "3001:3001"
+    depends_on:
+      kafka1:
+        condition: service_healthy
+      kafka2:
+        condition: service_healthy
+      kafka3:
+        condition: service_healthy
+      tidb:
+        condition: service_healthy
+    restart: on-failure
+    volumes:
+      - ./logs/consumer:/app/logs
+    networks:
+      - tidb-network
+
+  # Elasticsearch
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - ./data/elasticsearch:/usr/share/elasticsearch/data
+      - ./config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - tidb-network
+
+  # Filebeat for log collection
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.10.0
+    user: root
+    command: filebeat -e -strict.perms=false
+    volumes:
+      - ./config/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ./logs:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - tidb-network
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./data/prometheus:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - tidb-network
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      - ./data/grafana:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+      - elasticsearch
+    networks:
+      - tidb-network
+
+  # Database Initialization Service
+  db-init:
+    image: mysql:8.0
+    depends_on:
+      tidb:
+        condition: service_healthy
+    volumes:
+      - ./init-database.sql:/init.sql
+    command: ["mysql", "-h", "tidb", "-P", "4000", "-u", "root", "-e", "source /init.sql"]
+    restart: "no"
+    networks:
+      - tidb-network
+
+  # CDC Changefeed Setup Service
+  cdc-setup:
+    image: curlimages/curl:latest
+    depends_on:
+      tidb:
+        condition: service_healthy
+      kafka1:
+        condition: service_healthy
+      kafka2:
+        condition: service_healthy
+      kafka3:
+        condition: service_healthy
+      ticdc:
+        condition: service_started
+      db-init:
+        condition: service_completed_successfully
+    command: |
+      sh -c '
+        echo "⏳ Waiting for services to be ready..."
+        sleep 10
+        echo "🗑️ Removing any existing changefeed..."
+        curl -X DELETE "http://ticdc:8300/api/v1/changefeeds/tidb-kafka-changefeed" || echo "No existing changefeed to remove"
+        sleep 2
+        echo "🔄 Creating TiCDC changefeed with 3-broker configuration..."
+        curl -X POST "http://ticdc:8300/api/v1/changefeeds" \
+        -H "Content-Type: application/json" \
+        -d "{
+          \"changefeed_id\": \"tidb-kafka-changefeed\",
+          \"sink_uri\": \"kafka://kafka1:9092,kafka2:9092,kafka3:9092/tidb-cdc-events?protocol=canal-json&partition-num=3&replication-factor=3\",
+          \"rules\": [\"testdb.*\"]
+        }"
+        echo "✅ CDC setup completed with 3-broker Kafka configuration!"
+      '
+    restart: "no"
+    networks:
+      - tidb-network
+
+networks:
+  tidb-network:
+    driver: bridge
+
+volumes:
+  pd_data:
+  tikv_data:
+  tidb_data:
+  kafka_data:
+  zk_data:
+  elasticsearch_data:
+  prometheus_data:
+  grafana_data:

@@ -1,0 +1,16 @@
+cluster.name: "tidb-cdc-logs"
+node.name: "elasticsearch-node"
+path.data: /usr/share/elasticsearch/data
+path.logs: /usr/share/elasticsearch/logs
+network.host: 0.0.0.0
+http.port: 9200
+discovery.type: single-node
+xpack.security.enabled: false
+xpack.monitoring.collection.enabled: true
+
+# Index settings for CDC events
+action.auto_create_index: true
+
+# Performance settings
+indices.memory.index_buffer_size: 20%
+thread_pool.write.queue_size: 1000

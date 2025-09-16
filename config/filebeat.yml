@@ -1,0 +1,56 @@
+filebeat.inputs:
+- type: log
+  enabled: true
+  paths:
+    - /var/log/consumer/*.log
+  fields:
+    log_source: tidb-cdc-consumer
+  fields_under_root: true
+  json.keys_under_root: true
+  json.add_error_key: true
+  json.message_key: message
+  json.overwrite_keys: true
+  multiline.pattern: '^\d{4}-\d{2}-\d{2}'
+  multiline.negate: true
+  multiline.match: after
+  processors:
+    - rename:
+        fields:
+          - from: "service"
+            to: "app_service"
+        ignore_missing: true
+
+- type: log
+  enabled: true
+  paths:
+    - /var/log/ticdc/*.log
+  fields:
+    log_source: ticdc
+  fields_under_root: true
+  multiline.pattern: '^\[\d{4}\/\d{2}\/\d{2}'
+  multiline.negate: true
+  multiline.match: after
+
+output.elasticsearch:
+  hosts: ["elasticsearch:9200"]
+  index: "tidb-cdc-logs-%{+yyyy.MM.dd}"
+
+setup.template.name: "tidb-cdc-logs"
+setup.template.pattern: "tidb-cdc-logs-*"
+setup.template.settings:
+  index.number_of_shards: 1
+  index.number_of_replicas: 0
+
+processors:
+- add_host_metadata:
+    when.not.contains.tags: forwarded
+- add_docker_metadata: ~
+- add_kubernetes_metadata: ~
+
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: /var/log/filebeat
+  name: filebeat
+  keepfiles: 7
+  permissions: 0644
