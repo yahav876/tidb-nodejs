@@ -21,7 +21,7 @@ scrape_configs:
     static_configs:
       - targets: ['tidb:10080']
     scrape_interval: 15s
-    metrics_path: /status
+    metrics_path: /metrics
 
   - job_name: 'ticdc'
     static_configs:

@@ -336,7 +336,7 @@ services:
         condition: service_healthy
     volumes:
       - ./init-database.sql:/init.sql
-    command: ["mysql", "-h", "tidb", "-P", "4000", "-u", "root", "-e", "source /init.sql"]
+    command: sh -c "mysql -h tidb -P 4000 -u root < /init.sql"
     restart: "no"
     networks:
       - tidb-network
