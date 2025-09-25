@@ -48,7 +48,7 @@ tidb:
       peerPort: 2380
     podDisruptionBudget:
       enabled: true
-      minAvailable: 1
+      minAvailable: 2
 
   tikv:
     enabled: true
@@ -72,7 +72,7 @@ tidb:
       port: 20160
     podDisruptionBudget:
       enabled: true
-      minAvailable: 1
+      minAvailable: 2
 
   tidb:
     enabled: true
@@ -444,9 +444,412 @@ monitoring:
 
 networkPolicies:
   enabled: true
-  policyTypes:
-    - Ingress
-    - Egress
+  defaultDenyAll: true  # Start with zero-trust approach
+
+  # DNS is required for all pods
+  allowDNS: true
+
+  # Component-specific policies
+  components:
+    tidb:
+      enabled: true
+      ingress:
+        - name: "from-external-mysql-clients"
+          from:
+            - podSelector: {}  # Allow from any pod in namespace
+            - namespaceSelector:  # Allow from ingress namespace
+                matchLabels:
+                  name: ingress-nginx
+          ports:
+            - port: 4000
+              protocol: TCP
+              name: mysql
+        - name: "from-prometheus"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: prometheus
+          ports:
+            - port: 10080
+              protocol: TCP
+              name: status
+        - name: "from-consumer"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: consumer
+          ports:
+            - port: 4000
+              protocol: TCP
+      egress:
+        - name: "to-pd"
+          to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: pd
+          ports:
+            - port: 2379
+              protocol: TCP
+        - name: "to-tikv"
+          to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: tikv
+          ports:
+            - port: 20160
+              protocol: TCP
+
+    pd:
+      enabled: true
+      ingress:
+        - name: "from-tidb"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: tidb
+          ports:
+            - port: 2379
+              protocol: TCP
+        - name: "from-tikv"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: tikv
+          ports:
+            - port: 2379
+              protocol: TCP
+        - name: "from-ticdc"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: ticdc
+          ports:
+            - port: 2379
+              protocol: TCP
+        - name: "from-pd-peers"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: pd
+          ports:
+            - port: 2380
+              protocol: TCP
+              name: peer
+        - name: "from-prometheus"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: prometheus
+          ports:
+            - port: 2379
+              protocol: TCP
+      egress:
+        - name: "to-pd-peers"
+          to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: pd
+          ports:
+            - port: 2380
+              protocol: TCP
+
+    tikv:
+      enabled: true
+      ingress:
+        - name: "from-tidb"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: tidb
+          ports:
+            - port: 20160
+              protocol: TCP
+        - name: "from-ticdc"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: ticdc
+          ports:
+            - port: 20160
+              protocol: TCP
+        - name: "from-tikv-peers"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: tikv
+          ports:
+            - port: 20160
+              protocol: TCP
+        - name: "from-prometheus"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: prometheus
+          ports:
+            - port: 20180
+              protocol: TCP
+              name: metrics
+      egress:
+        - name: "to-pd"
+          to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: pd
+          ports:
+            - port: 2379
+              protocol: TCP
+        - name: "to-tikv-peers"
+          to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: tikv
+          ports:
+            - port: 20160
+              protocol: TCP
+
+    ticdc:
+      enabled: true
+      ingress:
+        - name: "from-prometheus"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: prometheus
+          ports:
+            - port: 8300
+              protocol: TCP
+      egress:
+        - name: "to-pd"
+          to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: pd
+          ports:
+            - port: 2379
+              protocol: TCP
+        - name: "to-tikv"
+          to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: tikv
+          ports:
+            - port: 20160
+              protocol: TCP
+        - name: "to-kafka"
+          to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: kafka
+          ports:
+            - port: 9092
+              protocol: TCP
+
+    kafka:
+      enabled: true
+      ingress:
+        - name: "from-ticdc"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: ticdc
+          ports:
+            - port: 9092
+              protocol: TCP
+        - name: "from-consumer"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: consumer
+          ports:
+            - port: 9092
+              protocol: TCP
+        - name: "from-kafka-peers"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: kafka
+          ports:
+            - port: 9092
+              protocol: TCP
+      egress:
+        - name: "to-zookeeper"
+          to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: zookeeper
+          ports:
+            - port: 2181
+              protocol: TCP
+        - name: "to-kafka-peers"
+          to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: kafka
+          ports:
+            - port: 9092
+              protocol: TCP
+
+    zookeeper:
+      enabled: true
+      ingress:
+        - name: "from-kafka"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: kafka
+          ports:
+            - port: 2181
+              protocol: TCP
+        - name: "from-zk-peers"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: zookeeper
+          ports:
+            - port: 2888
+              protocol: TCP
+              name: follower
+            - port: 3888
+              protocol: TCP
+              name: election
+      egress:
+        - name: "to-zk-peers"
+          to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: zookeeper
+          ports:
+            - port: 2888
+              protocol: TCP
+            - port: 3888
+              protocol: TCP
+
+    elasticsearch:
+      enabled: true
+      ingress:
+        - name: "from-filebeat"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: filebeat
+          ports:
+            - port: 9200
+              protocol: TCP
+        - name: "from-grafana"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: grafana
+          ports:
+            - port: 9200
+              protocol: TCP
+        - name: "from-es-peers"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: elasticsearch
+          ports:
+            - port: 9300
+              protocol: TCP
+              name: transport
+      egress:
+        - name: "to-es-peers"
+          to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: elasticsearch
+          ports:
+            - port: 9300
+              protocol: TCP
+
+    consumer:
+      enabled: true
+      ingress:
+        - name: "from-prometheus"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: prometheus
+          ports:
+            - port: 3001
+              protocol: TCP
+              name: metrics
+      egress:
+        - name: "to-kafka"
+          to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: kafka
+          ports:
+            - port: 9092
+              protocol: TCP
+        - name: "to-tidb"
+          to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: tidb
+          ports:
+            - port: 4000
+              protocol: TCP
+
+    prometheus:
+      enabled: true
+      ingress:
+        - name: "from-grafana"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: grafana
+          ports:
+            - port: 9090
+              protocol: TCP
+      egress:
+        - name: "to-all-metrics"
+          to:
+            - podSelector: {}  # Can scrape any pod in namespace
+          ports:
+            - port: 10080  # TiDB metrics
+              protocol: TCP
+            - port: 2379   # PD metrics
+              protocol: TCP
+            - port: 20180  # TiKV metrics
+              protocol: TCP
+            - port: 8300   # TiCDC metrics
+              protocol: TCP
+            - port: 3001   # Consumer metrics
+              protocol: TCP
+            - port: 9200   # Elasticsearch metrics
+              protocol: TCP
+
+    grafana:
+      enabled: true
+      ingress:
+        - name: "from-external"
+          from:
+            - podSelector: {}
+            - namespaceSelector:
+                matchLabels:
+                  name: ingress-nginx
+          ports:
+            - port: 3000
+              protocol: TCP
+      egress:
+        - name: "to-prometheus"
+          to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: prometheus
+          ports:
+            - port: 9090
+              protocol: TCP
+        - name: "to-elasticsearch"
+          to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/component: elasticsearch
+          ports:
+            - port: 9200
+              protocol: TCP
 
 rbac:
   create: true

@@ -1,0 +1,143 @@
+{{- if .Values.networkPolicies.enabled }}
+{{- $fullName := include "tidb-data-pipeline.fullname" . -}}
+{{- $labels := include "tidb-data-pipeline.labels" . -}}
+{{- $namespace := .Release.Namespace -}}
+
+{{- if .Values.networkPolicies.defaultDenyAll }}
+---
+# Default deny-all policy (Zero Trust approach)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-default-deny-all
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    {{- if .Values.networkPolicies.allowDNS }}
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- end }}
+{{- end }}
+
+{{- range $component, $policy := .Values.networkPolicies.components }}
+{{- if and $policy.enabled (or $policy.ingress $policy.egress) }}
+---
+# Network Policy for {{ $component }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-{{ $component }}
+  labels:
+    {{- $labels | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: {{ $component }}
+  policyTypes:
+    {{- if $policy.ingress }}
+    - Ingress
+    {{- end }}
+    {{- if $policy.egress }}
+    - Egress
+    {{- end }}
+
+  {{- if $policy.ingress }}
+  ingress:
+    {{- range $rule := $policy.ingress }}
+    # {{ $rule.name }}
+    - from:
+        {{- range $from := $rule.from }}
+        {{- if $from.podSelector }}
+        - podSelector:
+            {{- if $from.podSelector.matchLabels }}
+            matchLabels:
+              {{- toYaml $from.podSelector.matchLabels | nindent 14 }}
+            {{- else }}
+            {}
+            {{- end }}
+        {{- end }}
+        {{- if $from.namespaceSelector }}
+        - namespaceSelector:
+            {{- if $from.namespaceSelector.matchLabels }}
+            matchLabels:
+              {{- toYaml $from.namespaceSelector.matchLabels | nindent 14 }}
+            {{- else }}
+            {}
+            {{- end }}
+        {{- end }}
+        {{- end }}
+      {{- if $rule.ports }}
+      ports:
+        {{- range $port := $rule.ports }}
+        - protocol: {{ $port.protocol | default "TCP" }}
+          port: {{ $port.port }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+
+  {{- if $policy.egress }}
+  egress:
+    {{- range $rule := $policy.egress }}
+    # {{ $rule.name }}
+    - to:
+        {{- range $to := $rule.to }}
+        {{- if $to.podSelector }}
+        - podSelector:
+            {{- if $to.podSelector.matchLabels }}
+            matchLabels:
+              {{- toYaml $to.podSelector.matchLabels | nindent 14 }}
+            {{- else }}
+            {}
+            {{- end }}
+        {{- end }}
+        {{- if $to.namespaceSelector }}
+        - namespaceSelector:
+            {{- if $to.namespaceSelector.matchLabels }}
+            matchLabels:
+              {{- toYaml $to.namespaceSelector.matchLabels | nindent 14 }}
+            {{- else }}
+            {}
+            {{- end }}
+        {{- end }}
+        {{- end }}
+      {{- if $rule.ports }}
+      ports:
+        {{- range $port := $rule.ports }}
+        - protocol: {{ $port.protocol | default "TCP" }}
+          port: {{ $port.port }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+
+    {{- if $.Values.networkPolicies.allowDNS }}
+    # Always allow DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- end }}
+
+{{- end }}
