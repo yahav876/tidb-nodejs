@@ -369,7 +369,7 @@ services:
         -H "Content-Type: application/json" \
         -d "{
           \"changefeed_id\": \"tidb-kafka-changefeed\",
-          \"sink_uri\": \"kafka://kafka1:9092,kafka2:9092,kafka3:9092/tidb-cdc-events?protocol=canal-json&partition-num=3&replication-factor=3\",
+          \"sink_uri\": \"kafka://kafka1:9092,kafka2:9092,kafka3:9092/tidb-cdc-events?protocol=simple&partition-num=3&replication-factor=3&partition-dispatcher=index-value\",
           \"rules\": [\"testdb.*\"]
         }"
         echo "✅ CDC setup completed with 3-broker Kafka configuration!"

@@ -132,64 +132,159 @@ class TiDBCDCConsumer {
     const timer = cdcProcessingDuration.startTimer();
 
     try {
-      const payload = JSON.parse(message.value.toString());
-      logger.info('Processing CDC message:', payload);
+      // Parse the message key if it exists (for open-protocol)
+      let messageKey = null;
+      let tableName = 'unknown';
+      let rowId = null;
 
-      // Handle Canal JSON format from TiCDC
-      if (payload.data && Array.isArray(payload.data)) {
-        for (const row of payload.data) {
-          const tableName = payload.table || 'unknown';
-          let operationType = payload.type || 'unknown';
-
-          // For demonstration purposes, we'll track some operations as UPDATE
-          // Check if this looks like an UPDATE based on email pattern or timestamp difference
-          if (operationType === 'INSERT') {
-            // If email contains "updated_" or "mass_update_", treat as UPDATE
-            if (row.email && (row.email.includes('updated_') || row.email.includes('mass_update_'))) {
-              operationType = 'UPDATE';
-            }
-          }
-
-          // Increment Prometheus counter
-          cdcEventsCounter.inc({
-            table_name: tableName,
-            operation_type: operationType.toLowerCase()
-          });
-
-          // Log the event for Elasticsearch
-          logger.info('CDC Event', {
-            timestamp: new Date().toISOString(),
-            table_name: tableName,
-            operation_type: operationType,
-            data: row,
-            partition: message.partition,
-            offset: message.offset,
-            key: message.key ? message.key.toString() : null
-          });
+      if (message.key && message.key.length > 0) {
+        try {
+          messageKey = JSON.parse(message.key.toString());
+          tableName = messageKey.tbl || messageKey.table || 'unknown';
+          rowId = messageKey.rid || messageKey.rowid || null;
+        } catch (e) {
+          // Key might not be JSON in some cases
+          messageKey = message.key.toString();
         }
-      } else {
-        // Handle other message formats
-        const tableName = payload.table || 'unknown';
-        const operationType = payload.type || payload.op || 'unknown';
+      }
 
+      // Try to parse as JSON
+      let payload;
+      let isSimpleProtocol = false;
+
+      try {
+        payload = JSON.parse(message.value.toString());
+
+        // Check if this is simple-protocol format
+        // Simple protocol has schema, table, type fields at root level
+        if (payload.schema && payload.table && payload.type !== undefined) {
+          isSimpleProtocol = true;
+        }
+      } catch (e) {
+        // If JSON parsing fails, log and skip
+        logger.warn('Received non-JSON message', {
+          keyPresent: !!message.key,
+          partition: message.partition,
+          offset: message.offset,
+          error: e.message
+        });
+        kafkaMessagesTotal.inc();
+        timer({ table_name: 'unknown', operation_type: 'parse_error' });
+        return;
+      }
+
+      if (isSimpleProtocol) {
+        // Handle simple-protocol format
+        tableName = payload.table || tableName;
+        const schemaName = payload.schema || 'unknown';
+
+        // Determine operation type from the type field
+        let operationType = 'unknown';
+        if (payload.type === 0) {
+          operationType = 'INSERT';
+        } else if (payload.type === 1) {
+          operationType = 'UPDATE';
+        } else if (payload.type === 2) {
+          operationType = 'DELETE';
+        }
+
+        // Extract data from the appropriate field
+        let data = {};
+        if (operationType === 'INSERT' && payload.data) {
+          data = payload.data;
+        } else if (operationType === 'UPDATE' && payload.data) {
+          data = payload.data;
+          // For UPDATE, old values are in payload.old
+        } else if (operationType === 'DELETE' && payload.data) {
+          data = payload.data;
+        }
+
+        // For demonstration purposes, track some operations as UPDATE
+        if (operationType === 'INSERT' && data.email) {
+          if (data.email.includes('updated_') || data.email.includes('mass_update_')) {
+            operationType = 'UPDATE';
+          }
+        }
+
+        // Increment Prometheus counter
         cdcEventsCounter.inc({
           table_name: tableName,
           operation_type: operationType.toLowerCase()
         });
 
+        // Log the event for Elasticsearch
         logger.info('CDC Event', {
           timestamp: new Date().toISOString(),
+          schema_name: schemaName,
           table_name: tableName,
           operation_type: operationType,
-          data: payload,
+          data: data,
+          old_data: payload.old || null,
+          row_id: rowId,
           partition: message.partition,
           offset: message.offset,
-          key: message.key ? message.key.toString() : null
+          key: messageKey,
+          protocol: 'simple'
         });
+
+      } else {
+        // Handle Canal JSON format (existing logic)
+        if (payload.data && Array.isArray(payload.data)) {
+          for (const row of payload.data) {
+            tableName = payload.table || tableName;
+            let operationType = payload.type || 'unknown';
+
+            // For demonstration purposes, we'll track some operations as UPDATE
+            // Check if this looks like an UPDATE based on email pattern
+            if (operationType === 'INSERT') {
+              if (row.email && (row.email.includes('updated_') || row.email.includes('mass_update_'))) {
+                operationType = 'UPDATE';
+              }
+            }
+
+            // Increment Prometheus counter
+            cdcEventsCounter.inc({
+              table_name: tableName,
+              operation_type: operationType.toLowerCase()
+            });
+
+            // Log the event for Elasticsearch
+            logger.info('CDC Event', {
+              timestamp: new Date().toISOString(),
+              table_name: tableName,
+              operation_type: operationType,
+              data: row,
+              partition: message.partition,
+              offset: message.offset,
+              key: messageKey,
+              protocol: 'canal-json'
+            });
+          }
+        } else {
+          // Handle other message formats
+          tableName = payload.table || tableName;
+          const operationType = payload.type || payload.op || 'unknown';
+
+          cdcEventsCounter.inc({
+            table_name: tableName,
+            operation_type: operationType.toLowerCase()
+          });
+
+          logger.info('CDC Event', {
+            timestamp: new Date().toISOString(),
+            table_name: tableName,
+            operation_type: operationType,
+            data: payload,
+            partition: message.partition,
+            offset: message.offset,
+            key: messageKey,
+            protocol: 'unknown'
+          });
+        }
       }
 
       kafkaMessagesTotal.inc();
-      timer({ table_name: payload.table || 'unknown', operation_type: payload.type || 'unknown' });
+      timer({ table_name: tableName, operation_type: payload.type || 'unknown' });
 
     } catch (error) {
       logger.error('Error processing CDC message:', error);
