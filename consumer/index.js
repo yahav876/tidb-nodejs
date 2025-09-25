@@ -107,6 +107,30 @@ class TiDBCDCConsumer {
 
     this.dbConnection = null;
     this.isRunning = false;
+
+    // Track recent DELETE events to detect UPDATE operations
+    // Key: table_recordId, Value: { commitTs, timestamp, data }
+    this.recentDeletes = new Map();
+
+    // Clean up old deletes every 30 seconds
+    setInterval(() => {
+      const now = Date.now();
+      for (const [key, value] of this.recentDeletes.entries()) {
+        // Remove deletes older than 5 seconds
+        if (now - value.timestamp > 5000) {
+          this.recentDeletes.delete(key);
+        }
+      }
+    }, 30000);
+  }
+
+  extractRecordId(data) {
+    // Try to extract a unique identifier from the record
+    // Priority: id, then username, then email
+    if (data && data.id !== undefined) return data.id;
+    if (data && data.username) return data.username;
+    if (data && data.email) return data.email;
+    return null;
   }
 
   async connectToDatabase() {
@@ -228,59 +252,160 @@ class TiDBCDCConsumer {
         });
 
       } else {
-        // Handle Canal JSON format (existing logic)
-        if (payload.data && Array.isArray(payload.data)) {
-          for (const row of payload.data) {
-            tableName = payload.table || tableName;
-            let operationType = payload.type || 'unknown';
+        // Handle formats where UPDATE is represented as DELETE+INSERT
 
-            // For demonstration purposes, we'll track some operations as UPDATE
-            // Check if this looks like an UPDATE based on email pattern
-            if (operationType === 'INSERT') {
-              if (row.email && (row.email.includes('updated_') || row.email.includes('mass_update_'))) {
+        // Skip WATERMARK and BOOTSTRAP events
+        if (payload.type === 'WATERMARK' || payload.type === 'BOOTSTRAP') {
+          cdcEventsCounter.inc({
+            table_name: 'unknown',
+            operation_type: payload.type.toLowerCase()
+          });
+
+          logger.info('CDC Event', {
+            timestamp: new Date().toISOString(),
+            table_name: 'unknown',
+            operation_type: payload.type,
+            data: payload,
+            offset: message.offset,
+            key: messageKey
+          });
+
+          kafkaMessagesTotal.inc();
+          timer({ table_name: 'unknown', operation_type: payload.type.toLowerCase() });
+          return;
+        }
+
+        tableName = payload.table || tableName;
+        let operationType = payload.type || 'unknown';
+        const commitTs = payload.commitTs;
+
+        // Handle DELETE events
+        if (operationType === 'DELETE' && payload.old) {
+          const recordId = this.extractRecordId(payload.old);
+          if (recordId !== null) {
+            const deleteKey = `${tableName}_${recordId}`;
+            this.recentDeletes.set(deleteKey, {
+              commitTs: commitTs,
+              timestamp: Date.now(),
+              data: payload.old
+            });
+
+            logger.info('Tracking DELETE for potential UPDATE detection', {
+              table: tableName,
+              recordId: recordId,
+              commitTs: commitTs
+            });
+
+            // Wait to see if INSERT follows
+            setTimeout(() => {
+              if (this.recentDeletes.has(deleteKey)) {
+                const deleteInfo = this.recentDeletes.get(deleteKey);
+                if (deleteInfo.commitTs === commitTs) {
+                  cdcEventsCounter.inc({
+                    table_name: tableName,
+                    operation_type: 'delete'
+                  });
+
+                  logger.info('CDC Event', {
+                    timestamp: new Date().toISOString(),
+                    table_name: tableName,
+                    operation_type: 'DELETE',
+                    data: payload,
+                    offset: message.offset,
+                    key: messageKey
+                  });
+
+                  this.recentDeletes.delete(deleteKey);
+                }
+              }
+            }, 500);
+
+            kafkaMessagesTotal.inc();
+            timer({ table_name: tableName, operation_type: 'delete' });
+            return;
+          }
+        }
+
+        // Handle INSERT events - check if it's part of an UPDATE
+        if (operationType === 'INSERT' && payload.data) {
+          const recordId = this.extractRecordId(payload.data);
+          if (recordId !== null) {
+            const deleteKey = `${tableName}_${recordId}`;
+
+            // Check if we have a recent DELETE for this record with same commitTs
+            if (this.recentDeletes.has(deleteKey)) {
+              const deleteInfo = this.recentDeletes.get(deleteKey);
+
+              // If commitTs matches, this is an UPDATE operation
+              if (deleteInfo.commitTs === commitTs) {
                 operationType = 'UPDATE';
+                this.recentDeletes.delete(deleteKey);
+
+                logger.info('Detected UPDATE operation', {
+                  table: tableName,
+                  recordId: recordId,
+                  commitTs: commitTs,
+                  oldData: deleteInfo.data,
+                  newData: payload.data
+                });
+
+                cdcEventsCounter.inc({
+                  table_name: tableName,
+                  operation_type: 'update'
+                });
+
+                logger.info('CDC Event', {
+                  timestamp: new Date().toISOString(),
+                  table_name: tableName,
+                  operation_type: 'UPDATE',
+                  oldData: deleteInfo.data,
+                  newData: payload.data,
+                  offset: message.offset,
+                  key: messageKey
+                });
+
+                kafkaMessagesTotal.inc();
+                timer({ table_name: tableName, operation_type: 'update' });
+                return;
               }
             }
-
-            // Increment Prometheus counter
-            cdcEventsCounter.inc({
-              table_name: tableName,
-              operation_type: operationType.toLowerCase()
-            });
-
-            // Log the event for Elasticsearch
-            logger.info('CDC Event', {
-              timestamp: new Date().toISOString(),
-              table_name: tableName,
-              operation_type: operationType,
-              data: row,
-              partition: message.partition,
-              offset: message.offset,
-              key: messageKey,
-              protocol: 'canal-json'
-            });
           }
-        } else {
-          // Handle other message formats
-          tableName = payload.table || tableName;
-          const operationType = payload.type || payload.op || 'unknown';
 
+          // This is a regular INSERT
           cdcEventsCounter.inc({
             table_name: tableName,
-            operation_type: operationType.toLowerCase()
+            operation_type: 'insert'
           });
 
           logger.info('CDC Event', {
             timestamp: new Date().toISOString(),
             table_name: tableName,
-            operation_type: operationType,
-            data: payload,
-            partition: message.partition,
+            operation_type: 'INSERT',
+            data: payload.data,
             offset: message.offset,
-            key: messageKey,
-            protocol: 'unknown'
+            key: messageKey
           });
+
+          kafkaMessagesTotal.inc();
+          timer({ table_name: tableName, operation_type: 'insert' });
+          return;
         }
+
+        // Handle other operations
+        cdcEventsCounter.inc({
+          table_name: tableName,
+          operation_type: operationType.toLowerCase()
+        });
+
+        logger.info('CDC Event', {
+          timestamp: new Date().toISOString(),
+          table_name: tableName,
+          operation_type: operationType,
+          data: payload,
+          partition: message.partition,
+          offset: message.offset,
+          key: messageKey
+        });
       }
 
       kafkaMessagesTotal.inc();

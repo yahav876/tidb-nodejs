@@ -273,7 +273,7 @@
             "type": "elasticsearch",
             "uid": "Elasticsearch"
           },
-          "query": "message:\"CDC Event\" AND operation_type:*",
+          "query": "message:\"CDC Event\" AND (operation_type:INSERT OR operation_type:UPDATE OR operation_type:DELETE)",
           "refId": "A",
           "bucketAggs": [],
           "metrics": [
