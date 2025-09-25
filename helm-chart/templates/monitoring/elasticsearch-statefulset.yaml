@@ -1,0 +1,158 @@
+{{- if .Values.elasticsearch.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-elasticsearch
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "elasticsearch" "context" .) | nindent 4 }}
+spec:
+  serviceName: {{ include "tidb-data-pipeline.fullname" . }}-elasticsearch-headless
+  replicas: {{ .Values.elasticsearch.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "tidb-data-pipeline.componentSelectorLabels" (dict "component" "elasticsearch" "context" .) | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- include "tidb-data-pipeline.podAnnotations" . | nindent 8 }}
+      labels:
+        {{- include "tidb-data-pipeline.componentSelectorLabels" (dict "component" "elasticsearch" "context" .) | nindent 8 }}
+    spec:
+      {{- include "tidb-data-pipeline.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "tidb-data-pipeline.serviceAccountName" . }}
+      securityContext:
+        {{- include "tidb-data-pipeline.podSecurityContext" . | nindent 8 }}
+      initContainers:
+        - name: sysctl
+          image: busybox:1.35
+          imagePullPolicy: IfNotPresent
+          command: ['sh', '-c', 'sysctl -w vm.max_map_count=262144']
+          securityContext:
+            privileged: true
+        - name: chown
+          image: busybox:1.35
+          command: ['sh', '-c', 'chown -R 1000:1000 /usr/share/elasticsearch/data']
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/elasticsearch/data
+      containers:
+        - name: elasticsearch
+          securityContext:
+            {{- include "tidb-data-pipeline.containerSecurityContext" . | nindent 12 }}
+          image: "{{ .Values.elasticsearch.image.repository }}:{{ .Values.elasticsearch.image.tag }}"
+          imagePullPolicy: {{ .Values.elasticsearch.image.pullPolicy }}
+          env:
+            - name: cluster.name
+              value: {{ .Values.elasticsearch.clusterName }}
+            - name: node.name
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: discovery.seed_hosts
+              value: {{ include "tidb-data-pipeline.fullname" . }}-elasticsearch-headless
+            - name: cluster.initial_master_nodes
+              value: {{ range $i := until (int $.Values.elasticsearch.replicaCount) }}{{ if ne $i 0 }},{{ end }}{{ include "tidb-data-pipeline.fullname" $ }}-elasticsearch-{{ $i }}{{ end }}
+            - name: ES_JAVA_OPTS
+              value: {{ .Values.elasticsearch.javaOpts }}
+            - name: xpack.security.enabled
+              value: {{ .Values.elasticsearch.config.xpack.security.enabled | quote }}
+            - name: network.host
+              value: "0.0.0.0"
+          ports:
+            - name: http
+              containerPort: 9200
+              protocol: TCP
+            - name: transport
+              containerPort: 9300
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /_cluster/health
+              port: http
+            {{- toYaml .Values.healthChecks.livenessProbe | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /_cluster/health?local=true
+              port: http
+            {{- toYaml .Values.healthChecks.readinessProbe | nindent 12 }}
+          {{- include "tidb-data-pipeline.resources" .Values.elasticsearch | nindent 10 }}
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/elasticsearch/data
+            - name: config
+              mountPath: /usr/share/elasticsearch/config/elasticsearch.yml
+              subPath: elasticsearch.yml
+      nodeSelector:
+        {{- include "tidb-data-pipeline.nodeSelector" . | nindent 8 }}
+      affinity:
+        {{- include "tidb-data-pipeline.affinity" . | nindent 8 }}
+      tolerations:
+        {{- include "tidb-data-pipeline.tolerations" . | nindent 8 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "tidb-data-pipeline.fullname" . }}-elasticsearch-config
+  {{- if .Values.elasticsearch.persistence.enabled }}
+  volumeClaimTemplates:
+    {{- include "tidb-data-pipeline.volumeClaimTemplate" (dict "name" "data" "size" .Values.elasticsearch.persistence.size "storageClass" .Values.global.persistence.storageClass) | nindent 4 }}
+  {{- else }}
+      volumes:
+        - name: data
+          emptyDir: {}
+  {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-elasticsearch
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "elasticsearch" "context" .) | nindent 4 }}
+spec:
+  type: {{ .Values.elasticsearch.service.type }}
+  ports:
+    - port: {{ .Values.elasticsearch.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "tidb-data-pipeline.componentSelectorLabels" (dict "component" "elasticsearch" "context" .) | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-elasticsearch-headless
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "elasticsearch" "context" .) | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - port: {{ .Values.elasticsearch.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: {{ .Values.elasticsearch.service.transportPort }}
+      targetPort: transport
+      protocol: TCP
+      name: transport
+  selector:
+    {{- include "tidb-data-pipeline.componentSelectorLabels" (dict "component" "elasticsearch" "context" .) | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-elasticsearch-config
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "elasticsearch" "context" .) | nindent 4 }}
+data:
+  elasticsearch.yml: |
+    cluster.name: {{ .Values.elasticsearch.clusterName }}
+    network.host: 0.0.0.0
+    xpack.security.enabled: {{ .Values.elasticsearch.config.xpack.security.enabled }}
+    discovery.type: {{ .Values.elasticsearch.config.discovery.type }}
+    discovery.zen.minimum_master_nodes: {{ .Values.elasticsearch.config.minimum_master_nodes }}
+    node.roles: {{ toJson .Values.elasticsearch.config.node.roles }}
+---
+{{- include "tidb-data-pipeline.podDisruptionBudget" (dict "component" "elasticsearch" "values" .Values.elasticsearch "context" .) }}
+{{- end }}

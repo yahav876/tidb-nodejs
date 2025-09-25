@@ -1,0 +1,68 @@
+{{- if .Values.dbInit.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-db-init
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "db-init" "context" .) | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  template:
+    metadata:
+      labels:
+        {{- include "tidb-data-pipeline.componentSelectorLabels" (dict "component" "db-init" "context" .) | nindent 8 }}
+    spec:
+      {{- include "tidb-data-pipeline.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "tidb-data-pipeline.serviceAccountName" . }}
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-tidb
+          image: busybox:1.35
+          command: ['sh', '-c', 'until nc -z {{ include "tidb-data-pipeline.fullname" . }}-tidb {{ .Values.tidb.tidb.service.port }}; do echo waiting for tidb; sleep 2; done;']
+      containers:
+        - name: db-init
+          image: "{{ .Values.dbInit.image.repository }}:{{ .Values.dbInit.image.tag }}"
+          imagePullPolicy: {{ .Values.dbInit.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              echo "Initializing database..."
+              mysql -h {{ include "tidb-data-pipeline.fullname" . }}-tidb \
+                    -P {{ .Values.tidb.tidb.service.port }} \
+                    -u root \
+                    {{- if .Values.consumer.env.TIDB_PASSWORD }}
+                    -p$TIDB_PASSWORD \
+                    {{- end }}
+                    < /init.sql
+              echo "Database initialization completed!"
+          env:
+            {{- if .Values.consumer.env.TIDB_PASSWORD }}
+            - name: TIDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tidb-data-pipeline.fullname" . }}-tidb-secret
+                  key: password
+            {{- end }}
+          volumeMounts:
+            - name: init-sql
+              mountPath: /init.sql
+              subPath: init.sql
+      volumes:
+        - name: init-sql
+          configMap:
+            name: {{ include "tidb-data-pipeline.fullname" . }}-db-init-sql
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-db-init-sql
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "db-init" "context" .) | nindent 4 }}
+data:
+  init.sql: |
+{{ .Values.dbInit.sqlFile | indent 4 }}
+{{- end }}

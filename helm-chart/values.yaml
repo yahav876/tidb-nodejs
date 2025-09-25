@@ -1,0 +1,508 @@
+global:
+  namespace: tidb-pipeline
+  storageClass: "standard"
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  imagePullSecrets: []
+
+  persistence:
+    enabled: true
+    storageClass: "standard"
+
+  security:
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      fsGroup: 1000
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: false
+
+tidb:
+  enabled: true
+
+  pd:
+    enabled: true
+    image:
+      repository: pingcap/pd
+      tag: v7.5.7
+      pullPolicy: IfNotPresent
+    replicaCount: 3
+    resources:
+      limits:
+        cpu: 2
+        memory: 4Gi
+      requests:
+        cpu: 500m
+        memory: 1Gi
+    persistence:
+      enabled: true
+      size: 10Gi
+    service:
+      type: ClusterIP
+      clientPort: 2379
+      peerPort: 2380
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+
+  tikv:
+    enabled: true
+    image:
+      repository: pingcap/tikv
+      tag: v7.5.6-20250903-8ddf40d
+      pullPolicy: IfNotPresent
+    replicaCount: 3
+    resources:
+      limits:
+        cpu: 4
+        memory: 8Gi
+      requests:
+        cpu: 1
+        memory: 2Gi
+    persistence:
+      enabled: true
+      size: 50Gi
+    service:
+      type: ClusterIP
+      port: 20160
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+
+  tidb:
+    enabled: true
+    image:
+      repository: pingcap/tidb
+      tag: v7.5.7
+      pullPolicy: IfNotPresent
+    replicaCount: 2
+    resources:
+      limits:
+        cpu: 4
+        memory: 8Gi
+      requests:
+        cpu: 1
+        memory: 2Gi
+    service:
+      type: LoadBalancer
+      port: 4000
+      statusPort: 10080
+    config:
+      log:
+        level: info
+        format: json
+      performance:
+        maxProcs: 0
+        maxMemory: 0
+        serverMemoryQuota: 0
+        memoryUsageAlarmRatio: 0.8
+      preparedPlanCache:
+        enabled: true
+        capacity: 1000
+        memoryGuardRatio: 0.1
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+
+  ticdc:
+    enabled: true
+    image:
+      repository: pingcap/ticdc
+      tag: v7.5.7
+      pullPolicy: IfNotPresent
+    replicaCount: 2
+    resources:
+      limits:
+        cpu: 2
+        memory: 4Gi
+      requests:
+        cpu: 500m
+        memory: 1Gi
+    service:
+      type: ClusterIP
+      port: 8300
+    config:
+      logLevel: info
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+
+kafka:
+  enabled: true
+
+  zookeeper:
+    enabled: true
+    image:
+      repository: confluentinc/cp-zookeeper
+      tag: latest
+      pullPolicy: IfNotPresent
+    replicaCount: 3
+    resources:
+      limits:
+        cpu: 1
+        memory: 2Gi
+      requests:
+        cpu: 250m
+        memory: 512Mi
+    persistence:
+      enabled: true
+      size: 10Gi
+    env:
+      ZOOKEEPER_CLIENT_PORT: "2181"
+      ZOOKEEPER_TICK_TIME: "2000"
+      ZOOKEEPER_INIT_LIMIT: "5"
+      ZOOKEEPER_SYNC_LIMIT: "2"
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+
+  broker:
+    enabled: true
+    image:
+      repository: confluentinc/cp-kafka
+      tag: "7.4.0"
+      pullPolicy: IfNotPresent
+    replicaCount: 3
+    resources:
+      limits:
+        cpu: 2
+        memory: 4Gi
+      requests:
+        cpu: 500m
+        memory: 1Gi
+    persistence:
+      enabled: true
+      size: 20Gi
+    config:
+      autoCreateTopicsEnable: true
+      defaultReplicationFactor: 3
+      minInsyncReplicas: 2
+      numPartitions: 3
+      offsetsTopicReplicationFactor: 3
+      transactionStateLogReplicationFactor: 3
+      transactionStateLogMinIsr: 2
+      logRetentionHours: 168
+      logRetentionBytes: 1073741824
+      logSegmentBytes: 1073741824
+      uncleanLeaderElection: false
+      compressionType: "producer"
+    service:
+      type: ClusterIP
+      port: 9092
+      externalPort: 29092
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+
+elasticsearch:
+  enabled: true
+  image:
+    repository: docker.elastic.co/elasticsearch/elasticsearch
+    tag: "8.10.0"
+    pullPolicy: IfNotPresent
+  replicaCount: 3
+  clusterName: "tidb-pipeline"
+  config:
+    node:
+      roles: ["master", "data", "ingest", "ml"]
+    xpack:
+      security:
+        enabled: false
+    discovery:
+      type: zen
+    minimum_master_nodes: 2
+  resources:
+    limits:
+      cpu: 2
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 2Gi
+  persistence:
+    enabled: true
+    size: 30Gi
+  service:
+    type: ClusterIP
+    httpPort: 9200
+    transportPort: 9300
+  javaOpts: "-Xms2g -Xmx2g"
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+filebeat:
+  enabled: true
+  image:
+    repository: docker.elastic.co/beats/filebeat
+    tag: "8.10.0"
+    pullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  config:
+    output.elasticsearch:
+      hosts: ["elasticsearch:9200"]
+      index: "tidb-logs-%{+yyyy.MM.dd}"
+    filebeat.inputs:
+      - type: container
+        paths:
+          - /var/log/containers/*.log
+        processors:
+          - add_kubernetes_metadata:
+              host: ${NODE_NAME}
+              matchers:
+                - logs_path:
+                    logs_path: "/var/log/containers/"
+
+prometheus:
+  enabled: true
+  image:
+    repository: prom/prometheus
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: 2
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  persistence:
+    enabled: true
+    size: 20Gi
+  service:
+    type: ClusterIP
+    port: 9090
+  config:
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      scrape_timeout: 10s
+    retention: 15d
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+grafana:
+  enabled: true
+  image:
+    repository: grafana/grafana
+    tag: latest
+    pullPolicy: IfNotPresent
+  adminPassword: "admin"
+  resources:
+    limits:
+      cpu: 1
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+  persistence:
+    enabled: true
+    size: 5Gi
+  service:
+    type: LoadBalancer
+    port: 3000
+  plugins:
+    - grafana-clock-panel
+    - grafana-simple-json-datasource
+  datasources:
+    prometheus:
+      enabled: true
+      url: http://prometheus:9090
+    elasticsearch:
+      enabled: true
+      url: http://elasticsearch:9200
+  dashboards:
+    enabled: true
+    defaultDashboardsEnabled: true
+
+consumer:
+  enabled: true
+  image:
+    repository: tidb-cdc-consumer
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  resources:
+    limits:
+      cpu: 2
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    KAFKA_BROKERS: "kafka-0:9092,kafka-1:9092,kafka-2:9092"
+    TIDB_HOST: "tidb"
+    TIDB_PORT: "4000"
+    TIDB_USER: "root"
+    TIDB_PASSWORD: ""
+    TIDB_DATABASE: "testdb"
+    PROMETHEUS_PORT: "3001"
+  service:
+    type: ClusterIP
+    port: 3001
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+dbInit:
+  enabled: true
+  image:
+    repository: mysql
+    tag: "8.0"
+    pullPolicy: IfNotPresent
+  sqlFile: |
+    CREATE DATABASE IF NOT EXISTS testdb;
+    USE testdb;
+
+    CREATE TABLE IF NOT EXISTS users (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        username VARCHAR(50) NOT NULL,
+        email VARCHAR(100) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_username (username),
+        INDEX idx_email (email),
+        INDEX idx_created_at (created_at)
+    );
+
+    CREATE TABLE IF NOT EXISTS products (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        name VARCHAR(100) NOT NULL,
+        description TEXT,
+        price DECIMAL(10, 2) NOT NULL,
+        stock_quantity INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_name (name),
+        INDEX idx_price (price)
+    );
+
+    CREATE TABLE IF NOT EXISTS orders (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        user_id INT NOT NULL,
+        product_id INT NOT NULL,
+        quantity INT NOT NULL,
+        total_amount DECIMAL(10, 2) NOT NULL,
+        status ENUM('pending', 'processing', 'completed', 'cancelled') DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (product_id) REFERENCES products(id),
+        INDEX idx_user_id (user_id),
+        INDEX idx_product_id (product_id),
+        INDEX idx_status (status),
+        INDEX idx_created_at (created_at)
+    );
+
+cdcSetup:
+  enabled: true
+  image:
+    repository: curlimages/curl
+    tag: latest
+    pullPolicy: IfNotPresent
+  changefeedId: "tidb-kafka-changefeed"
+  sinkUri: "kafka://kafka-0:9092,kafka-1:9092,kafka-2:9092/tidb-cdc-events?protocol=simple&partition-num=3&replication-factor=3&partition-dispatcher=index-value"
+  rules:
+    - "testdb.*"
+
+monitoring:
+  alerts:
+    enabled: true
+    rules:
+      - name: TiDBDown
+        expr: up{job="tidb"} == 0
+        duration: 5m
+        severity: critical
+        description: "TiDB instance {{ $labels.instance }} is down"
+      - name: KafkaLagHigh
+        expr: kafka_consumer_lag > 1000
+        duration: 10m
+        severity: warning
+        description: "Kafka consumer lag is high: {{ $value }}"
+      - name: ElasticsearchClusterRed
+        expr: elasticsearch_cluster_health_status{color="red"} == 1
+        duration: 5m
+        severity: critical
+        description: "Elasticsearch cluster status is RED"
+
+networkPolicies:
+  enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+
+rbac:
+  create: true
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: tidb.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+          service: tidb
+          port: 4000
+    - host: grafana.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+          service: grafana
+          port: 3000
+  tls:
+    - secretName: tidb-tls
+      hosts:
+        - tidb.example.com
+    - secretName: grafana-tls
+      hosts:
+        - grafana.example.com
+
+backup:
+  enabled: false
+  schedule: "0 2 * * *"
+  retention: 30
+  s3:
+    enabled: false
+    bucket: ""
+    region: ""
+    endpoint: ""
+    accessKey: ""
+    secretKey: ""
+
+healthChecks:
+  enabled: true
+  livenessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3

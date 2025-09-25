@@ -1,0 +1,130 @@
+Thank you for installing {{ .Chart.Name }}!
+
+Your release is named {{ .Release.Name }} and installed in namespace {{ .Release.Namespace }}.
+
+## Components Status
+
+TiDB Data Pipeline components deployed:
+{{- if .Values.tidb.enabled }}
+  ✓ TiDB Cluster (PD, TiKV, TiDB, TiCDC)
+{{- end }}
+{{- if .Values.kafka.enabled }}
+  ✓ Apache Kafka with Zookeeper
+{{- end }}
+{{- if .Values.elasticsearch.enabled }}
+  ✓ Elasticsearch
+{{- end }}
+{{- if .Values.prometheus.enabled }}
+  ✓ Prometheus
+{{- end }}
+{{- if .Values.grafana.enabled }}
+  ✓ Grafana
+{{- end }}
+{{- if .Values.consumer.enabled }}
+  ✓ Consumer Application
+{{- end }}
+
+## Access Information
+
+### TiDB Database
+{{- if .Values.tidb.enabled }}
+  Connection: {{ include "tidb-data-pipeline.fullname" . }}-tidb:{{ .Values.tidb.tidb.service.port }}
+  {{- if eq .Values.tidb.tidb.service.type "LoadBalancer" }}
+
+  Get the TiDB external IP:
+    kubectl get svc {{ include "tidb-data-pipeline.fullname" . }}-tidb -n {{ .Release.Namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+  {{- end }}
+
+  Connect using MySQL client:
+    mysql -h <HOST> -P {{ .Values.tidb.tidb.service.port }} -u root {{- if .Values.consumer.env.TIDB_PASSWORD }} -p {{- end }}
+{{- end }}
+
+### Grafana Dashboard
+{{- if .Values.grafana.enabled }}
+  URL: http://{{ include "tidb-data-pipeline.fullname" . }}-grafana:{{ .Values.grafana.service.port }}
+  {{- if eq .Values.grafana.service.type "LoadBalancer" }}
+
+  Get the Grafana external IP:
+    kubectl get svc {{ include "tidb-data-pipeline.fullname" . }}-grafana -n {{ .Release.Namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+  {{- end }}
+
+  Default credentials:
+    Username: admin
+    Password: {{ .Values.grafana.adminPassword }}
+{{- end }}
+
+### Prometheus
+{{- if .Values.prometheus.enabled }}
+  URL: http://{{ include "tidb-data-pipeline.fullname" . }}-prometheus:{{ .Values.prometheus.service.port }}
+{{- end }}
+
+### Elasticsearch
+{{- if .Values.elasticsearch.enabled }}
+  URL: http://{{ include "tidb-data-pipeline.fullname" . }}-elasticsearch:{{ .Values.elasticsearch.service.httpPort }}
+{{- end }}
+
+## Quick Start Commands
+
+1. Check pod status:
+   kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+2. View logs:
+   kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+3. Port forward to access services locally:
+   {{- if .Values.tidb.enabled }}
+   # TiDB:
+   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "tidb-data-pipeline.fullname" . }}-tidb 4000:{{ .Values.tidb.tidb.service.port }}
+   {{- end }}
+   {{- if .Values.grafana.enabled }}
+   # Grafana:
+   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "tidb-data-pipeline.fullname" . }}-grafana 3000:{{ .Values.grafana.service.port }}
+   {{- end }}
+   {{- if .Values.prometheus.enabled }}
+   # Prometheus:
+   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "tidb-data-pipeline.fullname" . }}-prometheus 9090:{{ .Values.prometheus.service.port }}
+   {{- end }}
+
+## Monitoring
+
+{{- if .Values.grafana.enabled }}
+Access Grafana dashboards to monitor:
+- CDC event rates and processing times
+- Kafka message throughput
+- TiDB cluster health
+- Consumer application metrics
+{{- end }}
+
+{{- if .Values.ingress.enabled }}
+## Ingress URLs
+
+Your services are available at:
+{{- range .Values.ingress.hosts }}
+  - {{ .host }}
+{{- end }}
+{{- end }}
+
+## Troubleshooting
+
+If pods are not starting:
+1. Check pod status: kubectl describe pod <pod-name> -n {{ .Release.Namespace }}
+2. Check logs: kubectl logs <pod-name> -n {{ .Release.Namespace }}
+3. Verify PVC binding: kubectl get pvc -n {{ .Release.Namespace }}
+4. Check resource availability: kubectl top nodes
+
+## Scaling
+
+To scale components:
+{{- if .Values.consumer.autoscaling.enabled }}
+- Consumer autoscaling is enabled ({{ .Values.consumer.autoscaling.minReplicas }}-{{ .Values.consumer.autoscaling.maxReplicas }} replicas)
+{{- else }}
+- Consumer: kubectl scale deployment {{ include "tidb-data-pipeline.fullname" . }}-consumer --replicas=<N> -n {{ .Release.Namespace }}
+{{- end }}
+- TiDB: helm upgrade {{ .Release.Name }} <chart> --set tidb.tidb.replicaCount=<N> -n {{ .Release.Namespace }}
+- TiKV: helm upgrade {{ .Release.Name }} <chart> --set tidb.tikv.replicaCount=<N> -n {{ .Release.Namespace }}
+
+## Support
+
+For issues or questions:
+- Documentation: https://github.com/example/tidb-data-pipeline
+- Issues: https://github.com/example/tidb-data-pipeline/issues

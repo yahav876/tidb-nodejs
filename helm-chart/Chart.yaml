@@ -1,0 +1,24 @@
+apiVersion: v2
+name: tidb-data-pipeline
+description: Production-ready Helm chart for TiDB CDC data pipeline with Kafka, Elasticsearch, and monitoring
+type: application
+version: 1.0.0
+appVersion: "7.5.7"
+keywords:
+  - tidb
+  - kafka
+  - cdc
+  - elasticsearch
+  - grafana
+  - prometheus
+  - data-pipeline
+maintainers:
+  - name: DevOps Team
+    email: devops@example.com
+home: https://github.com/example/tidb-data-pipeline
+sources:
+  - https://github.com/tikv/tikv
+  - https://github.com/pingcap/tidb
+  - https://github.com/apache/kafka
+  - https://github.com/elastic/elasticsearch
+dependencies: []

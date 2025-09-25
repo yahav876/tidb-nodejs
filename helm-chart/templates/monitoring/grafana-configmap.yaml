@@ -1,0 +1,380 @@
+{{- if .Values.grafana.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-grafana-provisioning
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "grafana" "context" .) | nindent 4 }}
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      {{- if .Values.grafana.datasources.prometheus.enabled }}
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: {{ .Values.grafana.datasources.prometheus.url }}
+        isDefault: true
+        editable: true
+      {{- end }}
+      {{- if .Values.grafana.datasources.elasticsearch.enabled }}
+      - name: Elasticsearch
+        type: elasticsearch
+        access: proxy
+        url: {{ .Values.grafana.datasources.elasticsearch.url }}
+        database: "tidb-logs-*"
+        jsonData:
+          esVersion: "8.0.0"
+          timeField: "@timestamp"
+          logMessageField: message
+          logLevelField: level
+        editable: true
+      {{- end }}
+
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: 'default'
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 10
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-grafana-dashboards
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "grafana" "context" .) | nindent 4 }}
+data:
+  tidb-overview.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "uid": "tidb-overview",
+        "title": "TiDB Data Pipeline Overview",
+        "tags": ["tidb", "cdc", "kafka"],
+        "timezone": "browser",
+        "schemaVersion": 30,
+        "version": 1,
+        "refresh": "10s",
+        "panels": [
+          {
+            "datasource": "Prometheus",
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "tooltip": false,
+                    "viz": false,
+                    "legend": false
+                  },
+                  "lineInterpolation": "linear",
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "spanNulls": true,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                },
+                "unit": "short"
+              },
+              "overrides": []
+            },
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 0
+            },
+            "id": 1,
+            "options": {
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom"
+              },
+              "tooltip": {
+                "mode": "single",
+                "sort": "none"
+              }
+            },
+            "pluginVersion": "8.0.0",
+            "targets": [
+              {
+                "expr": "rate(tidb_cdc_events_total[1m])",
+                "legendFormat": "{{ "{{" }}table_name{{ "}}" }}-{{ "{{" }}operation_type{{ "}}" }}",
+                "refId": "A"
+              }
+            ],
+            "title": "CDC Events Rate",
+            "type": "timeseries"
+          },
+          {
+            "datasource": "Prometheus",
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    }
+                  ]
+                },
+                "unit": "short"
+              },
+              "overrides": []
+            },
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 0
+            },
+            "id": 2,
+            "options": {
+              "orientation": "auto",
+              "reduceOptions": {
+                "values": false,
+                "calcs": ["lastNotNull"],
+                "fields": ""
+              },
+              "showThresholdLabels": false,
+              "showThresholdMarkers": true
+            },
+            "pluginVersion": "8.0.0",
+            "targets": [
+              {
+                "expr": "sum(tidb_cdc_events_total)",
+                "legendFormat": "Total Events",
+                "refId": "A"
+              }
+            ],
+            "title": "Total CDC Events",
+            "type": "stat"
+          },
+          {
+            "datasource": "Prometheus",
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "tooltip": false,
+                    "viz": false,
+                    "legend": false
+                  },
+                  "lineInterpolation": "linear",
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "spanNulls": true,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                },
+                "unit": "s"
+              },
+              "overrides": []
+            },
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 8
+            },
+            "id": 3,
+            "options": {
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom"
+              },
+              "tooltip": {
+                "mode": "single",
+                "sort": "none"
+              }
+            },
+            "pluginVersion": "8.0.0",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(tidb_cdc_processing_duration_seconds_bucket[5m]))",
+                "legendFormat": "p95",
+                "refId": "A"
+              },
+              {
+                "expr": "histogram_quantile(0.99, rate(tidb_cdc_processing_duration_seconds_bucket[5m]))",
+                "legendFormat": "p99",
+                "refId": "B"
+              }
+            ],
+            "title": "CDC Processing Duration",
+            "type": "timeseries"
+          },
+          {
+            "datasource": "Prometheus",
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "drawStyle": "line",
+                  "fillOpacity": 10,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "tooltip": false,
+                    "viz": false,
+                    "legend": false
+                  },
+                  "lineInterpolation": "linear",
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "spanNulls": true,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                },
+                "unit": "short"
+              },
+              "overrides": []
+            },
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 8
+            },
+            "id": 4,
+            "options": {
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom"
+              },
+              "tooltip": {
+                "mode": "single",
+                "sort": "none"
+              }
+            },
+            "pluginVersion": "8.0.0",
+            "targets": [
+              {
+                "expr": "rate(kafka_messages_consumed_total[1m])",
+                "legendFormat": "Messages/sec",
+                "refId": "A"
+              }
+            ],
+            "title": "Kafka Message Rate",
+            "type": "timeseries"
+          }
+        ],
+        "templating": {
+          "list": []
+        },
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "timepicker": {},
+        "annotations": {
+          "list": []
+        }
+      }
+    }
+{{- end }}

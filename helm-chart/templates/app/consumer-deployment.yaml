@@ -1,0 +1,139 @@
+{{- if .Values.consumer.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-consumer
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "consumer" "context" .) | nindent 4 }}
+spec:
+  {{- if not .Values.consumer.autoscaling.enabled }}
+  replicas: {{ .Values.consumer.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "tidb-data-pipeline.componentSelectorLabels" (dict "component" "consumer" "context" .) | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- include "tidb-data-pipeline.podAnnotations" . | nindent 8 }}
+      labels:
+        {{- include "tidb-data-pipeline.componentSelectorLabels" (dict "component" "consumer" "context" .) | nindent 8 }}
+    spec:
+      {{- include "tidb-data-pipeline.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "tidb-data-pipeline.serviceAccountName" . }}
+      securityContext:
+        {{- include "tidb-data-pipeline.podSecurityContext" . | nindent 8 }}
+      initContainers:
+        - name: wait-for-tidb
+          image: busybox:1.35
+          command: ['sh', '-c', 'until nc -z {{ include "tidb-data-pipeline.fullname" . }}-tidb {{ .Values.tidb.tidb.service.port }}; do echo waiting for tidb; sleep 2; done;']
+        - name: wait-for-kafka
+          image: busybox:1.35
+          command: ['sh', '-c', 'until nc -z {{ include "tidb-data-pipeline.fullname" . }}-kafka {{ .Values.kafka.broker.service.port }}; do echo waiting for kafka; sleep 2; done;']
+        - name: wait-for-ticdc
+          image: busybox:1.35
+          command: ['sh', '-c', 'sleep 30; until nc -z {{ include "tidb-data-pipeline.fullname" . }}-ticdc {{ .Values.tidb.ticdc.service.port }}; do echo waiting for ticdc; sleep 2; done;']
+      containers:
+        - name: consumer
+          securityContext:
+            {{- include "tidb-data-pipeline.containerSecurityContext" . | nindent 12 }}
+          image: "{{ .Values.consumer.image.repository }}:{{ .Values.consumer.image.tag }}"
+          imagePullPolicy: {{ .Values.consumer.image.pullPolicy }}
+          env:
+            - name: KAFKA_BROKERS
+              value: {{ .Values.consumer.env.KAFKA_BROKERS }}
+            - name: TIDB_HOST
+              value: {{ .Values.consumer.env.TIDB_HOST }}
+            - name: TIDB_PORT
+              value: {{ .Values.consumer.env.TIDB_PORT | quote }}
+            - name: TIDB_USER
+              value: {{ .Values.consumer.env.TIDB_USER }}
+            - name: TIDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tidb-data-pipeline.fullname" . }}-tidb-secret
+                  key: password
+                  optional: true
+            - name: TIDB_DATABASE
+              value: {{ .Values.consumer.env.TIDB_DATABASE }}
+            - name: PROMETHEUS_PORT
+              value: {{ .Values.consumer.env.PROMETHEUS_PORT | quote }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.consumer.service.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            {{- toYaml .Values.healthChecks.livenessProbe | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            {{- toYaml .Values.healthChecks.readinessProbe | nindent 12 }}
+          {{- include "tidb-data-pipeline.resources" .Values.consumer | nindent 10 }}
+          volumeMounts:
+            - name: logs
+              mountPath: /app/logs
+      nodeSelector:
+        {{- include "tidb-data-pipeline.nodeSelector" . | nindent 8 }}
+      affinity:
+        {{- include "tidb-data-pipeline.affinity" . | nindent 8 }}
+      tolerations:
+        {{- include "tidb-data-pipeline.tolerations" . | nindent 8 }}
+      volumes:
+        - name: logs
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-consumer
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "consumer" "context" .) | nindent 4 }}
+spec:
+  type: {{ .Values.consumer.service.type }}
+  ports:
+    - port: {{ .Values.consumer.service.port }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+  selector:
+    {{- include "tidb-data-pipeline.componentSelectorLabels" (dict "component" "consumer" "context" .) | nindent 4 }}
+---
+{{- if .Values.consumer.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-consumer
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "consumer" "context" .) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "tidb-data-pipeline.fullname" . }}-consumer
+  minReplicas: {{ .Values.consumer.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.consumer.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.consumer.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.consumer.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.consumer.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.consumer.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+{{- end }}
+---
+{{- include "tidb-data-pipeline.podDisruptionBudget" (dict "component" "consumer" "values" .Values.consumer "context" .) }}
+{{- end }}

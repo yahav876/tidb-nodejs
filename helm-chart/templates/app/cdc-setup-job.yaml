@@ -1,0 +1,72 @@
+{{- if .Values.cdcSetup.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-cdc-setup
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "cdc-setup" "context" .) | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  template:
+    metadata:
+      labels:
+        {{- include "tidb-data-pipeline.componentSelectorLabels" (dict "component" "cdc-setup" "context" .) | nindent 8 }}
+    spec:
+      {{- include "tidb-data-pipeline.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "tidb-data-pipeline.serviceAccountName" . }}
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-services
+          image: busybox:1.35
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for TiDB..."
+              until nc -z {{ include "tidb-data-pipeline.fullname" . }}-tidb {{ .Values.tidb.tidb.service.port }}; do sleep 2; done
+              echo "Waiting for Kafka..."
+              until nc -z {{ include "tidb-data-pipeline.fullname" . }}-kafka {{ .Values.kafka.broker.service.port }}; do sleep 2; done
+              echo "Waiting for TiCDC..."
+              until nc -z {{ include "tidb-data-pipeline.fullname" . }}-ticdc {{ .Values.tidb.ticdc.service.port }}; do sleep 2; done
+              echo "All services are ready!"
+              sleep 10
+      containers:
+        - name: cdc-setup
+          image: "{{ .Values.cdcSetup.image.repository }}:{{ .Values.cdcSetup.image.tag }}"
+          imagePullPolicy: {{ .Values.cdcSetup.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              echo "Setting up CDC changefeed..."
+
+              # Remove existing changefeed if it exists
+              curl -X DELETE "http://{{ include "tidb-data-pipeline.fullname" . }}-ticdc:{{ .Values.tidb.ticdc.service.port }}/api/v1/changefeeds/{{ .Values.cdcSetup.changefeedId }}" || echo "No existing changefeed to remove"
+
+              sleep 2
+
+              # Create new changefeed
+              echo "Creating changefeed with configuration:"
+              echo "Changefeed ID: {{ .Values.cdcSetup.changefeedId }}"
+              echo "Sink URI: {{ .Values.cdcSetup.sinkUri }}"
+              echo "Rules: {{ join ", " .Values.cdcSetup.rules }}"
+
+              curl -X POST "http://{{ include "tidb-data-pipeline.fullname" . }}-ticdc:{{ .Values.tidb.ticdc.service.port }}/api/v1/changefeeds" \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "changefeed_id": "{{ .Values.cdcSetup.changefeedId }}",
+                  "sink_uri": "{{ .Values.cdcSetup.sinkUri }}",
+                  "rules": {{ toJson .Values.cdcSetup.rules }}
+                }'
+
+              echo ""
+              echo "CDC changefeed setup completed!"
+
+              # Verify changefeed was created
+              sleep 3
+              echo "Verifying changefeed status..."
+              curl -s "http://{{ include "tidb-data-pipeline.fullname" . }}-ticdc:{{ .Values.tidb.ticdc.service.port }}/api/v1/changefeeds/{{ .Values.cdcSetup.changefeedId }}" | grep -q "{{ .Values.cdcSetup.changefeedId }}" && echo "Changefeed verified!" || echo "Warning: Could not verify changefeed"
+{{- end }}

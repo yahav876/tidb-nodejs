@@ -1,0 +1,151 @@
+{{- if .Values.grafana.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-grafana
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "grafana" "context" .) | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "tidb-data-pipeline.componentSelectorLabels" (dict "component" "grafana" "context" .) | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/monitoring/grafana-configmap.yaml") . | sha256sum }}
+        {{- include "tidb-data-pipeline.podAnnotations" . | nindent 8 }}
+      labels:
+        {{- include "tidb-data-pipeline.componentSelectorLabels" (dict "component" "grafana" "context" .) | nindent 8 }}
+    spec:
+      {{- include "tidb-data-pipeline.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "tidb-data-pipeline.serviceAccountName" . }}
+      securityContext:
+        {{- include "tidb-data-pipeline.podSecurityContext" . | nindent 8 }}
+      initContainers:
+        - name: download-plugins
+          image: "{{ .Values.grafana.image.repository }}:{{ .Values.grafana.image.tag }}"
+          imagePullPolicy: {{ .Values.grafana.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /var/lib/grafana/plugins
+              {{- range .Values.grafana.plugins }}
+              grafana-cli --pluginsDir /var/lib/grafana/plugins plugins install {{ . }} || true
+              {{- end }}
+          volumeMounts:
+            - name: plugins
+              mountPath: /var/lib/grafana/plugins
+      containers:
+        - name: grafana
+          securityContext:
+            {{- include "tidb-data-pipeline.containerSecurityContext" . | nindent 12 }}
+          image: "{{ .Values.grafana.image.repository }}:{{ .Values.grafana.image.tag }}"
+          imagePullPolicy: {{ .Values.grafana.image.pullPolicy }}
+          env:
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tidb-data-pipeline.fullname" . }}-grafana-secret
+                  key: admin-password
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_PATHS_DATA
+              value: /var/lib/grafana
+            - name: GF_PATHS_LOGS
+              value: /var/log/grafana
+            - name: GF_PATHS_PLUGINS
+              value: /var/lib/grafana/plugins
+            - name: GF_PATHS_PROVISIONING
+              value: /etc/grafana/provisioning
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            {{- toYaml .Values.healthChecks.livenessProbe | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            {{- toYaml .Values.healthChecks.readinessProbe | nindent 12 }}
+          {{- include "tidb-data-pipeline.resources" .Values.grafana | nindent 10 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/grafana
+            - name: plugins
+              mountPath: /var/lib/grafana/plugins
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+      nodeSelector:
+        {{- include "tidb-data-pipeline.nodeSelector" . | nindent 8 }}
+      affinity:
+        {{- include "tidb-data-pipeline.affinity" . | nindent 8 }}
+      tolerations:
+        {{- include "tidb-data-pipeline.tolerations" . | nindent 8 }}
+      volumes:
+        - name: plugins
+          emptyDir: {}
+        - name: provisioning
+          configMap:
+            name: {{ include "tidb-data-pipeline.fullname" . }}-grafana-provisioning
+        - name: dashboards
+          configMap:
+            name: {{ include "tidb-data-pipeline.fullname" . }}-grafana-dashboards
+        {{- if .Values.grafana.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "tidb-data-pipeline.fullname" . }}-grafana
+        {{- else }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+---
+{{- if .Values.grafana.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-grafana
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "grafana" "context" .) | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- include "tidb-data-pipeline.storageClass" . | nindent 2 }}
+  resources:
+    requests:
+      storage: {{ .Values.grafana.persistence.size }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-grafana
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "grafana" "context" .) | nindent 4 }}
+spec:
+  type: {{ .Values.grafana.service.type }}
+  ports:
+    - port: {{ .Values.grafana.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "tidb-data-pipeline.componentSelectorLabels" (dict "component" "grafana" "context" .) | nindent 4 }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-grafana-secret
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "grafana" "context" .) | nindent 4 }}
+type: Opaque
+data:
+  admin-password: {{ .Values.grafana.adminPassword | b64enc }}
+{{- end }}

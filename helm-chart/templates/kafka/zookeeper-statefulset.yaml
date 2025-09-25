@@ -1,0 +1,127 @@
+{{- if .Values.kafka.enabled }}
+{{- if .Values.kafka.zookeeper.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-zookeeper
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "zookeeper" "context" .) | nindent 4 }}
+spec:
+  serviceName: {{ include "tidb-data-pipeline.fullname" . }}-zookeeper-headless
+  replicas: {{ .Values.kafka.zookeeper.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "tidb-data-pipeline.componentSelectorLabels" (dict "component" "zookeeper" "context" .) | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- include "tidb-data-pipeline.podAnnotations" . | nindent 8 }}
+      labels:
+        {{- include "tidb-data-pipeline.componentSelectorLabels" (dict "component" "zookeeper" "context" .) | nindent 8 }}
+    spec:
+      {{- include "tidb-data-pipeline.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "tidb-data-pipeline.serviceAccountName" . }}
+      securityContext:
+        {{- include "tidb-data-pipeline.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: zookeeper
+          securityContext:
+            {{- include "tidb-data-pipeline.containerSecurityContext" . | nindent 12 }}
+          image: "{{ .Values.kafka.zookeeper.image.repository }}:{{ .Values.kafka.zookeeper.image.tag }}"
+          imagePullPolicy: {{ .Values.kafka.zookeeper.image.pullPolicy }}
+          env:
+            - name: ZOOKEEPER_CLIENT_PORT
+              value: {{ .Values.kafka.zookeeper.env.ZOOKEEPER_CLIENT_PORT | quote }}
+            - name: ZOOKEEPER_TICK_TIME
+              value: {{ .Values.kafka.zookeeper.env.ZOOKEEPER_TICK_TIME | quote }}
+            - name: ZOOKEEPER_INIT_LIMIT
+              value: {{ .Values.kafka.zookeeper.env.ZOOKEEPER_INIT_LIMIT | quote }}
+            - name: ZOOKEEPER_SYNC_LIMIT
+              value: {{ .Values.kafka.zookeeper.env.ZOOKEEPER_SYNC_LIMIT | quote }}
+            - name: ZOOKEEPER_SERVER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['statefulset.kubernetes.io/pod-name']
+            - name: ZOOKEEPER_SERVERS
+              value: {{ range $i := until (int $.Values.kafka.zookeeper.replicaCount) }}{{ if ne $i 0 }};{{ end }}{{ include "tidb-data-pipeline.fullname" $ }}-zookeeper-{{ $i }}.{{ include "tidb-data-pipeline.fullname" $ }}-zookeeper-headless:2888:3888{{ end }}
+          ports:
+            - name: client
+              containerPort: 2181
+              protocol: TCP
+            - name: follower
+              containerPort: 2888
+              protocol: TCP
+            - name: election
+              containerPort: 3888
+              protocol: TCP
+          livenessProbe:
+            tcpSocket:
+              port: client
+            {{- toYaml .Values.healthChecks.livenessProbe | nindent 12 }}
+          readinessProbe:
+            exec:
+              command: ['/bin/bash', '-c', 'echo "ruok" | nc localhost 2181 | grep "imok"']
+            {{- toYaml .Values.healthChecks.readinessProbe | nindent 12 }}
+          {{- include "tidb-data-pipeline.resources" .Values.kafka.zookeeper | nindent 10 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/zookeeper
+      nodeSelector:
+        {{- include "tidb-data-pipeline.nodeSelector" . | nindent 8 }}
+      affinity:
+        {{- include "tidb-data-pipeline.affinity" . | nindent 8 }}
+      tolerations:
+        {{- include "tidb-data-pipeline.tolerations" . | nindent 8 }}
+  {{- if .Values.kafka.zookeeper.persistence.enabled }}
+  volumeClaimTemplates:
+    {{- include "tidb-data-pipeline.volumeClaimTemplate" (dict "name" "data" "size" .Values.kafka.zookeeper.persistence.size "storageClass" .Values.global.persistence.storageClass) | nindent 4 }}
+  {{- else }}
+      volumes:
+        - name: data
+          emptyDir: {}
+  {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-zookeeper
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "zookeeper" "context" .) | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 2181
+      targetPort: client
+      protocol: TCP
+      name: client
+  selector:
+    {{- include "tidb-data-pipeline.componentSelectorLabels" (dict "component" "zookeeper" "context" .) | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-zookeeper-headless
+  labels:
+    {{- include "tidb-data-pipeline.componentLabels" (dict "component" "zookeeper" "context" .) | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - port: 2181
+      targetPort: client
+      protocol: TCP
+      name: client
+    - port: 2888
+      targetPort: follower
+      protocol: TCP
+      name: follower
+    - port: 3888
+      targetPort: election
+      protocol: TCP
+      name: election
+  selector:
+    {{- include "tidb-data-pipeline.componentSelectorLabels" (dict "component" "zookeeper" "context" .) | nindent 4 }}
+---
+{{- include "tidb-data-pipeline.podDisruptionBudget" (dict "component" "zookeeper" "values" .Values.kafka.zookeeper "context" .) }}
+{{- end }}
+{{- end }}
