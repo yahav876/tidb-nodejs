@@ -33,21 +33,50 @@ consumer/node_modules/
 .DS_Store
 
 # Data directory - ignore all data files but keep directory structure
-data/*
-!data/*/
-data/*/*
-!data/*/*/
-data/*/*/*
-!data/*/*/*/
-data/*/*/*/*
-!data/*/*/*/*/
-data/*/*/*/*/*
-!data/*/*/*/*/*/
-# Keep .gitkeep files to preserve directory structure
+# Elasticsearch indices
+data/elasticsearch/indices/*/
+!data/elasticsearch/indices/.gitkeep
+
+# Elasticsearch nodes
+data/elasticsearch/nodes/
+
+# Kafka data
+data/kafka*/
+!data/kafka*/.gitkeep
+
+# Zookeeper data
+data/zookeeper/
+!data/zookeeper/.gitkeep
+
+# TiDB cluster data
+data/pd*/
+!data/pd*/.gitkeep
+data/tikv*/
+!data/tikv*/.gitkeep
+
+# Prometheus data
+data/prometheus/
+!data/prometheus/.gitkeep
+
+# Grafana data
+data/grafana/
+!data/grafana/.gitkeep
+!data/grafana/dashboards/
+!data/grafana/provisioning/
+
+# Keep directory structure with .gitkeep files
 !data/**/.gitkeep
+
+# Common data file extensions to ignore
 *.dat
 *.db
 *.sqlite
+*.log
+*.wal
+*.tlog
+*.ckp
+*.st
+*.lock
 
 # Docker volumes and data
 mysql_data/
