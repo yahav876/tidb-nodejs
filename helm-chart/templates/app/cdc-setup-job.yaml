@@ -26,11 +26,11 @@ spec:
             - -c
             - |
               echo "Waiting for TiDB..."
-              until nc -z {{ include "tidb-data-pipeline.fullname" . }}-tidb {{ .Values.tidb.tidb.service.port }}; do sleep 2; done
+              until nc -z {{ include "tidb-data-pipeline.fullname" . }}-tidb-tidb {{ .Values.tidbCluster.tidb.service.port | default 4000 }}; do sleep 2; done
               echo "Waiting for Kafka..."
               until nc -z {{ include "tidb-data-pipeline.fullname" . }}-kafka {{ .Values.kafka.broker.service.port }}; do sleep 2; done
               echo "Waiting for TiCDC..."
-              until nc -z {{ include "tidb-data-pipeline.fullname" . }}-ticdc {{ .Values.tidb.ticdc.service.port }}; do sleep 2; done
+              until nc -z {{ include "tidb-data-pipeline.fullname" . }}-tidb-ticdc {{ .Values.tidbCluster.ticdc.service.port | default 8301 }}; do sleep 2; done
               echo "All services are ready!"
               sleep 10
       containers:
@@ -44,7 +44,7 @@ spec:
               echo "Setting up CDC changefeed..."
 
               # Remove existing changefeed if it exists
-              curl -X DELETE "http://{{ include "tidb-data-pipeline.fullname" . }}-ticdc:{{ .Values.tidb.ticdc.service.port }}/api/v1/changefeeds/{{ .Values.cdcSetup.changefeedId }}" || echo "No existing changefeed to remove"
+              curl -X DELETE "http://{{ include "tidb-data-pipeline.fullname" . }}-tidb-ticdc:{{ .Values.tidbCluster.ticdc.service.port | default 8301 }}/api/v1/changefeeds/{{ .Values.cdcSetup.changefeedId }}" || echo "No existing changefeed to remove"
 
               sleep 2
 
@@ -54,7 +54,7 @@ spec:
               echo "Sink URI: {{ .Values.cdcSetup.sinkUri }}"
               echo "Rules: {{ join ", " .Values.cdcSetup.rules }}"
 
-              curl -X POST "http://{{ include "tidb-data-pipeline.fullname" . }}-ticdc:{{ .Values.tidb.ticdc.service.port }}/api/v1/changefeeds" \
+              curl -X POST "http://{{ include "tidb-data-pipeline.fullname" . }}-ticdc:{{ .Values.tidbCluster.ticdc.service.port | default 8301 }}/api/v1/changefeeds" \
                 -H "Content-Type: application/json" \
                 -d '{
                   "changefeed_id": "{{ .Values.cdcSetup.changefeedId }}",
@@ -68,5 +68,5 @@ spec:
               # Verify changefeed was created
               sleep 3
               echo "Verifying changefeed status..."
-              curl -s "http://{{ include "tidb-data-pipeline.fullname" . }}-ticdc:{{ .Values.tidb.ticdc.service.port }}/api/v1/changefeeds/{{ .Values.cdcSetup.changefeedId }}" | grep -q "{{ .Values.cdcSetup.changefeedId }}" && echo "Changefeed verified!" || echo "Warning: Could not verify changefeed"
+              curl -s "http://{{ include "tidb-data-pipeline.fullname" . }}-ticdc:{{ .Values.tidbCluster.ticdc.service.port | default 8301 }}/api/v1/changefeeds/{{ .Values.cdcSetup.changefeedId }}" | grep -q "{{ .Values.cdcSetup.changefeedId }}" && echo "Changefeed verified!" || echo "Warning: Could not verify changefeed"
 {{- end }}

@@ -1,0 +1,157 @@
+{{- if .Values.tidbCluster.enabled }}
+apiVersion: pingcap.com/v1alpha1
+kind: TidbCluster
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-tidb
+  labels:
+    {{- include "tidb-data-pipeline.labels" . | nindent 4 }}
+spec:
+  version: {{ .Values.tidbCluster.version }}
+  timezone: {{ .Values.tidbCluster.timezone }}
+  pvReclaimPolicy: {{ .Values.tidbCluster.pvReclaimPolicy }}
+  enableDynamicConfiguration: {{ .Values.tidbCluster.enableDynamicConfiguration }}
+  configUpdateStrategy: {{ .Values.tidbCluster.configUpdateStrategy }}
+  discovery: {}
+
+  pd:
+    baseImage: {{ .Values.tidbCluster.pd.baseImage }}
+    version: {{ .Values.tidbCluster.pd.version | default .Values.tidbCluster.version }}
+    replicas: {{ .Values.tidbCluster.pd.replicas }}
+    storageClassName: {{ .Values.tidbCluster.pd.storageClassName | default .Values.global.persistence.storageClass }}
+    requests:
+      storage: {{ .Values.tidbCluster.pd.storage }}
+      {{- if .Values.tidbCluster.pd.resources.requests }}
+      {{- toYaml .Values.tidbCluster.pd.resources.requests | nindent 6 }}
+      {{- end }}
+    {{- if .Values.tidbCluster.pd.resources.limits }}
+    limits:
+      {{- toYaml .Values.tidbCluster.pd.resources.limits | nindent 6 }}
+    {{- end }}
+    config: |
+      [dashboard]
+        internal-proxy = true
+      [replication]
+        location-labels = ["zone", "rack", "host"]
+    {{- with .Values.tidbCluster.pd.nodeSelector }}
+    nodeSelector:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.tidbCluster.pd.tolerations }}
+    tolerations:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.tidbCluster.pd.affinity }}
+    affinity:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+
+  tikv:
+    baseImage: {{ .Values.tidbCluster.tikv.baseImage }}
+    version: {{ .Values.tidbCluster.tikv.version | default .Values.tidbCluster.version }}
+    replicas: {{ .Values.tidbCluster.tikv.replicas }}
+    storageClassName: {{ .Values.tidbCluster.tikv.storageClassName | default .Values.global.persistence.storageClass }}
+    requests:
+      storage: {{ .Values.tidbCluster.tikv.storage }}
+      {{- if .Values.tidbCluster.tikv.resources.requests }}
+      {{- toYaml .Values.tidbCluster.tikv.resources.requests | nindent 6 }}
+      {{- end }}
+    {{- if .Values.tidbCluster.tikv.resources.limits }}
+    limits:
+      {{- toYaml .Values.tidbCluster.tikv.resources.limits | nindent 6 }}
+    {{- end }}
+    config: |
+      [storage]
+        reserve-space = "0GB"
+      [rocksdb]
+        max-open-files = 256
+      [raftdb]
+        max-open-files = 256
+    {{- with .Values.tidbCluster.tikv.nodeSelector }}
+    nodeSelector:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.tidbCluster.tikv.tolerations }}
+    tolerations:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.tidbCluster.tikv.affinity }}
+    affinity:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+
+  tidb:
+    baseImage: {{ .Values.tidbCluster.tidb.baseImage }}
+    version: {{ .Values.tidbCluster.tidb.version | default .Values.tidbCluster.version }}
+    replicas: {{ .Values.tidbCluster.tidb.replicas }}
+    service:
+      type: {{ .Values.tidbCluster.tidb.service.type }}
+      annotations:
+        {{- toYaml .Values.tidbCluster.tidb.service.annotations | nindent 8 }}
+    {{- if .Values.tidbCluster.tidb.resources.requests }}
+    requests:
+      {{- toYaml .Values.tidbCluster.tidb.resources.requests | nindent 6 }}
+    {{- end }}
+    {{- if .Values.tidbCluster.tidb.resources.limits }}
+    limits:
+      {{- toYaml .Values.tidbCluster.tidb.resources.limits | nindent 6 }}
+    {{- end }}
+    config: |
+      [log]
+        level = "{{ .Values.tidbCluster.tidb.logLevel }}"
+      [performance]
+        max-procs = 0
+      [prepared-plan-cache]
+        enabled = true
+    {{- with .Values.tidbCluster.tidb.nodeSelector }}
+    nodeSelector:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.tidbCluster.tidb.tolerations }}
+    tolerations:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.tidbCluster.tidb.affinity }}
+    affinity:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+
+  {{- if .Values.tidbCluster.tiflash.enabled }}
+  tiflash:
+    baseImage: {{ .Values.tidbCluster.tiflash.baseImage }}
+    version: {{ .Values.tidbCluster.tiflash.version | default .Values.tidbCluster.version }}
+    replicas: {{ .Values.tidbCluster.tiflash.replicas }}
+    storageClaims:
+      - resources:
+          requests:
+            storage: {{ .Values.tidbCluster.tiflash.storage }}
+        storageClassName: {{ .Values.tidbCluster.tiflash.storageClassName | default .Values.global.persistence.storageClass }}
+    {{- if .Values.tidbCluster.tiflash.resources.requests }}
+    requests:
+      {{- toYaml .Values.tidbCluster.tiflash.resources.requests | nindent 6 }}
+    {{- end }}
+    {{- if .Values.tidbCluster.tiflash.resources.limits }}
+    limits:
+      {{- toYaml .Values.tidbCluster.tiflash.resources.limits | nindent 6 }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.tidbCluster.ticdc.enabled }}
+  ticdc:
+    baseImage: {{ .Values.tidbCluster.ticdc.baseImage }}
+    version: {{ .Values.tidbCluster.ticdc.version | default .Values.tidbCluster.version }}
+    replicas: {{ .Values.tidbCluster.ticdc.replicas }}
+    {{- if .Values.tidbCluster.ticdc.resources.requests }}
+    requests:
+      {{- toYaml .Values.tidbCluster.ticdc.resources.requests | nindent 6 }}
+    {{- end }}
+    {{- if .Values.tidbCluster.ticdc.resources.limits }}
+    limits:
+      {{- toYaml .Values.tidbCluster.ticdc.resources.limits | nindent 6 }}
+    {{- end }}
+    config: |
+      gc-ttl = 86400
+      log-level = "info"
+      [scheduler]
+        enable-table-across-nodes = true
+  {{- end }}
+{{- end }}

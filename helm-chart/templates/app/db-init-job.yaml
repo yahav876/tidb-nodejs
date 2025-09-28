@@ -21,7 +21,7 @@ spec:
       initContainers:
         - name: wait-for-tidb
           image: busybox:1.35
-          command: ['sh', '-c', 'until nc -z {{ include "tidb-data-pipeline.fullname" . }}-tidb {{ .Values.tidb.tidb.service.port }}; do echo waiting for tidb; sleep 2; done;']
+          command: ['sh', '-c', 'until nc -z {{ include "tidb-data-pipeline.fullname" . }}-tidb-tidb {{ .Values.tidbCluster.tidb.service.port | default 4000 }}; do echo waiting for tidb; sleep 2; done;']
       containers:
         - name: db-init
           image: "{{ .Values.dbInit.image.repository }}:{{ .Values.dbInit.image.tag }}"
@@ -31,8 +31,8 @@ spec:
             - -c
             - |
               echo "Initializing database..."
-              mysql -h {{ include "tidb-data-pipeline.fullname" . }}-tidb \
-                    -P {{ .Values.tidb.tidb.service.port }} \
+              mysql -h {{ include "tidb-data-pipeline.fullname" . }}-tidb-tidb \
+                    -P {{ .Values.tidbCluster.tidb.service.port | default 4000 }} \
                     -u root \
                     {{- if .Values.consumer.env.TIDB_PASSWORD }}
                     -p$TIDB_PASSWORD \

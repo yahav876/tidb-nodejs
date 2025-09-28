@@ -1,0 +1,84 @@
+{{- if .Values.tidbCluster.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-crd-check
+  labels:
+    {{- include "tidb-data-pipeline.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+data:
+  check-crds.sh: |
+    #!/bin/sh
+    set -e
+
+    echo "Checking for TiDB Operator CRDs..."
+
+    REQUIRED_CRDS="tidbclusters.pingcap.com tidbinitializers.pingcap.com"
+    MISSING_CRDS=""
+
+    for CRD in $REQUIRED_CRDS; do
+      if ! kubectl get crd $CRD >/dev/null 2>&1; then
+        MISSING_CRDS="$MISSING_CRDS $CRD"
+      fi
+    done
+
+    if [ -n "$MISSING_CRDS" ]; then
+      echo ""
+      echo "============================================================================"
+      echo "ERROR: TiDB Operator CRDs are not installed!"
+      echo "============================================================================"
+      echo ""
+      echo "Missing CRDs:$MISSING_CRDS"
+      echo ""
+      echo "Please install TiDB Operator CRDs first by running:"
+      echo ""
+      echo "  kubectl create -f https://raw.githubusercontent.com/pingcap/tidb-operator/v1.5.2/manifests/crd.yaml"
+      echo ""
+      echo "Or if you want to install specific version:"
+      echo ""
+      echo "  kubectl create -f https://raw.githubusercontent.com/pingcap/tidb-operator/<version>/manifests/crd.yaml"
+      echo ""
+      echo "After installing CRDs, run the helm install command again."
+      echo "============================================================================"
+      echo ""
+      exit 1
+    fi
+
+    echo "✓ All required TiDB Operator CRDs are installed"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-crd-check
+  labels:
+    {{- include "tidb-data-pipeline.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      name: {{ include "tidb-data-pipeline.fullname" . }}-crd-check
+      labels:
+        {{- include "tidb-data-pipeline.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "tidb-data-pipeline.fullname" . }}-crd-check
+      containers:
+      - name: crd-check
+        image: bitnami/kubectl:1.28
+        command: ["/bin/sh"]
+        args: ["/scripts/check-crds.sh"]
+        volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+      volumes:
+      - name: scripts
+        configMap:
+          name: {{ include "tidb-data-pipeline.fullname" . }}-crd-check
+          defaultMode: 0755
+{{- end }}

@@ -1,0 +1,39 @@
+apiVersion: v2
+name: tidb-pipeline-prod
+description: Production-ready TiDB CDC Pipeline with official Helm charts
+type: application
+version: 2.0.0
+appVersion: "1.0.0"
+
+dependencies:
+  # TiDB Operator - Official Chart
+  - name: tidb-operator
+    version: v1.6.3
+    repository: https://charts.pingcap.org/
+    condition: tidb-operator.enabled
+
+  # Elasticsearch - Official Elastic Chart
+  - name: elasticsearch
+    version: 8.15.0
+    repository: https://helm.elastic.co
+    condition: elasticsearch.enabled
+
+  # Kibana - Official Elastic Chart
+  - name: kibana
+    version: 8.15.0
+    repository: https://helm.elastic.co
+    condition: kibana.enabled
+
+  # Kafka - Bitnami Official Chart
+  - name: kafka
+    version: 30.0.0
+    repository: https://charts.bitnami.com/bitnami
+    condition: kafka.enabled
+
+  # Prometheus - Official Community Chart
+  - name: kube-prometheus-stack
+    version: 65.0.0
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: monitoring.enabled
+
+  # Grafana is included in kube-prometheus-stack

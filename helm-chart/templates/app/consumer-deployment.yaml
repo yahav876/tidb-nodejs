@@ -26,13 +26,13 @@ spec:
       initContainers:
         - name: wait-for-tidb
           image: busybox:1.35
-          command: ['sh', '-c', 'until nc -z {{ include "tidb-data-pipeline.fullname" . }}-tidb {{ .Values.tidb.tidb.service.port }}; do echo waiting for tidb; sleep 2; done;']
+          command: ['sh', '-c', 'until nc -z {{ include "tidb-data-pipeline.fullname" . }}-tidb-tidb {{ .Values.tidbCluster.tidb.service.port | default 4000 }}; do echo waiting for tidb; sleep 2; done;']
         - name: wait-for-kafka
           image: busybox:1.35
           command: ['sh', '-c', 'until nc -z {{ include "tidb-data-pipeline.fullname" . }}-kafka {{ .Values.kafka.broker.service.port }}; do echo waiting for kafka; sleep 2; done;']
         - name: wait-for-ticdc
           image: busybox:1.35
-          command: ['sh', '-c', 'sleep 30; until nc -z {{ include "tidb-data-pipeline.fullname" . }}-ticdc {{ .Values.tidb.ticdc.service.port }}; do echo waiting for ticdc; sleep 2; done;']
+          command: ['sh', '-c', 'sleep 30; until nc -z {{ include "tidb-data-pipeline.fullname" . }}-tidb-ticdc {{ .Values.tidbCluster.ticdc.service.port | default 8301 }}; do echo waiting for ticdc; sleep 2; done;']
       containers:
         - name: consumer
           securityContext:
@@ -43,7 +43,7 @@ spec:
             - name: KAFKA_BROKERS
               value: {{ .Values.consumer.env.KAFKA_BROKERS }}
             - name: TIDB_HOST
-              value: {{ .Values.consumer.env.TIDB_HOST }}
+              value: {{ .Values.consumer.env.TIDB_HOST | default (printf "%s-tidb-tidb" (include "tidb-data-pipeline.fullname" .)) }}
             - name: TIDB_PORT
               value: {{ .Values.consumer.env.TIDB_PORT | quote }}
             - name: TIDB_USER

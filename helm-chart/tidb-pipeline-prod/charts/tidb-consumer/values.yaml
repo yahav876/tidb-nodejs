@@ -1,0 +1,145 @@
+replicaCount: 3
+
+image:
+  repository: your-registry/tidb-consumer
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - tidb-consumer
+        topologyKey: kubernetes.io/hostname
+
+config:
+  kafka:
+    brokers: "kafka:9092"
+    topic: "tidb-cdc-events"
+    consumerGroup: "tidb-consumer-group"
+    sessionTimeout: 30000
+    heartbeatInterval: 3000
+    maxPollRecords: 500
+
+  elasticsearch:
+    host: "elasticsearch-master"
+    port: 9200
+    protocol: "https"
+    index: "tidb-events"
+    username: "elastic"
+    # Password should be stored in a secret
+
+  processing:
+    batchSize: 1000
+    flushInterval: 5000
+    maxRetries: 3
+    retryDelay: 1000
+
+  logging:
+    level: "info"
+    format: "json"
+
+# Health checks
+livenessProbe:
+  httpGet:
+    path: /health/live
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health/ready
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Network Policy
+networkPolicy:
+  enabled: true
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - port: 8080
+      protocol: TCP
+  egress:
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - port: 9092  # Kafka
+      protocol: TCP
+    - port: 9200  # Elasticsearch
+      protocol: TCP
+    - port: 53    # DNS
+      protocol: UDP
+    - port: 53    # DNS
+      protocol: TCP

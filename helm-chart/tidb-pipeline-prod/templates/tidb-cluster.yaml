@@ -1,0 +1,88 @@
+{{- if .Values.tidbCluster.enabled }}
+apiVersion: pingcap.com/v1alpha1
+kind: TidbCluster
+metadata:
+  name: {{ .Release.Name }}-tidb
+  namespace: {{ .Release.Namespace }}
+spec:
+  version: {{ .Values.tidbCluster.version }}
+  timezone: {{ .Values.tidbCluster.timezone }}
+  pvReclaimPolicy: {{ .Values.tidbCluster.pvReclaimPolicy }}
+  enableDynamicConfiguration: true
+  configUpdateStrategy: RollingUpdate
+  discovery: {}
+
+  pd:
+    baseImage: pingcap/pd
+    replicas: {{ .Values.tidbCluster.pd.replicas }}
+    requests:
+      storage: {{ .Values.tidbCluster.pd.storage }}
+    config: |
+      [dashboard]
+        internal-proxy = true
+      [replication]
+        location-labels = ["zone", "rack", "host"]
+    {{- if .Values.tidbCluster.pd.storageClassName }}
+    storageClassName: {{ .Values.tidbCluster.pd.storageClassName }}
+    {{- end }}
+
+  tikv:
+    baseImage: pingcap/tikv
+    replicas: {{ .Values.tidbCluster.tikv.replicas }}
+    requests:
+      storage: {{ .Values.tidbCluster.tikv.storage }}
+    config: |
+      [storage]
+        reserve-space = "0GB"
+      [rocksdb]
+        max-open-files = 40960
+      [raftdb]
+        max-open-files = 40960
+    {{- if .Values.tidbCluster.tikv.storageClassName }}
+    storageClassName: {{ .Values.tidbCluster.tikv.storageClassName }}
+    {{- end }}
+
+  tidb:
+    baseImage: pingcap/tidb
+    replicas: {{ .Values.tidbCluster.tidb.replicas }}
+    service:
+      type: {{ .Values.tidbCluster.tidb.serviceType }}
+    config: |
+      [log]
+        level = "info"
+      [performance]
+        max-procs = 0
+      [prepared-plan-cache]
+        enabled = true
+
+  ticdc:
+    baseImage: pingcap/ticdc
+    replicas: {{ .Values.tidbCluster.ticdc.replicas }}
+    config: |
+      gc-ttl = 86400
+      log-level = "info"
+      [scheduler]
+        enable-table-across-nodes = true
+---
+apiVersion: pingcap.com/v1alpha1
+kind: TidbInitializer
+metadata:
+  name: {{ .Release.Name }}-tidb-init
+  namespace: {{ .Release.Namespace }}
+spec:
+  image: mysql:8.0
+  cluster:
+    namespace: {{ .Release.Namespace }}
+    name: {{ .Release.Name }}-tidb
+  initSql: |
+    CREATE DATABASE IF NOT EXISTS testdb;
+    USE testdb;
+    CREATE TABLE IF NOT EXISTS events (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      event_type VARCHAR(50) NOT NULL,
+      event_data JSON,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_event_type (event_type),
+      INDEX idx_created_at (created_at)
+    );
+{{- end }}

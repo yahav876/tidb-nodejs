@@ -27,33 +27,37 @@ data:
         static_configs:
           - targets: ['localhost:9090']
 
+      {{- if .Values.tidbCluster.enabled }}
       - job_name: 'tidb'
         static_configs:
           - targets:
-            - '{{ include "tidb-data-pipeline.fullname" . }}-tidb:{{ .Values.tidb.tidb.service.statusPort }}'
+            - '{{ include "tidb-data-pipeline.fullname" . }}-tidb-tidb:{{ .Values.tidbCluster.tidb.service.statusPort | default 10080 }}'
         metrics_path: /metrics
 
       - job_name: 'pd'
         static_configs:
           - targets:
-            {{- range $i := until (int $.Values.tidb.pd.replicaCount) }}
-            - '{{ include "tidb-data-pipeline.fullname" $ }}-pd-{{ $i }}.{{ include "tidb-data-pipeline.fullname" $ }}-pd-headless:2379'
+            {{- range $i := until (int $.Values.tidbCluster.pd.replicas) }}
+            - '{{ include "tidb-data-pipeline.fullname" $ }}-tidb-pd-{{ $i }}.{{ include "tidb-data-pipeline.fullname" $ }}-tidb-pd-peer:{{ $.Values.tidbCluster.pd.service.clientPort | default 2379 }}'
             {{- end }}
         metrics_path: /metrics
 
       - job_name: 'tikv'
         static_configs:
           - targets:
-            {{- range $i := until (int $.Values.tidb.tikv.replicaCount) }}
-            - '{{ include "tidb-data-pipeline.fullname" $ }}-tikv-{{ $i }}.{{ include "tidb-data-pipeline.fullname" $ }}-tikv-headless:20180'
+            {{- range $i := until (int $.Values.tidbCluster.tikv.replicas) }}
+            - '{{ include "tidb-data-pipeline.fullname" $ }}-tidb-tikv-{{ $i }}.{{ include "tidb-data-pipeline.fullname" $ }}-tidb-tikv-peer:{{ $.Values.tidbCluster.tikv.service.statusPort | default 20180 }}'
             {{- end }}
         metrics_path: /metrics
+      {{- end }}
 
+      {{- if .Values.tidbCluster.ticdc.enabled }}
       - job_name: 'ticdc'
         static_configs:
           - targets:
-            - '{{ include "tidb-data-pipeline.fullname" . }}-ticdc:{{ .Values.tidb.ticdc.service.port }}'
+            - '{{ include "tidb-data-pipeline.fullname" . }}-tidb-ticdc:{{ .Values.tidbCluster.ticdc.service.port | default 8301 }}'
         metrics_path: /api/v1/metrics
+      {{- end }}
 
       - job_name: 'consumer'
         static_configs:

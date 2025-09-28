@@ -1,0 +1,248 @@
+# Global settings
+global:
+  storageClass: "standard"  # Change to your production storage class
+
+# TiDB Operator Configuration
+tidb-operator:
+  enabled: true
+  scheduler:
+    create: true
+    kubeSchedulerImageName: registry.k8s.io/kube-scheduler
+  webhook:
+    create: true
+  controllerManager:
+    logLevel: 2
+    replicas: 1
+
+# Elasticsearch Configuration - Using Official Chart
+elasticsearch:
+  enabled: true
+  replicas: 3
+  minimumMasterNodes: 2
+
+  # Resources for production
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "2Gi"
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+
+  volumeClaimTemplate:
+    accessModes: ["ReadWriteOnce"]
+    resources:
+      requests:
+        storage: 30Gi
+    storageClassName: "standard"  # Change to your production storage class
+
+  # Production settings
+  esJavaOpts: "-Xms2g -Xmx2g"
+
+  antiAffinity: "hard"
+
+  # Persistence
+  persistence:
+    enabled: true
+
+  # Security
+  protocol: https
+
+  extraEnvs:
+    - name: "ELASTIC_PASSWORD"
+      valueFrom:
+        secretKeyRef:
+          name: elasticsearch-credentials
+          key: password
+
+# Kibana Configuration - Using Official Chart
+kibana:
+  enabled: true
+  elasticsearchHosts: "https://elasticsearch-master:9200"
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+
+  service:
+    type: ClusterIP
+    port: 5601
+
+# Kafka Configuration - Using Bitnami Chart
+kafka:
+  enabled: true
+
+  # Kafka broker configuration
+  replicaCount: 3
+
+  # Enable Kraft mode (no Zookeeper)
+  kraft:
+    enabled: true
+    clusterId: "tidb-pipeline-kafka"
+
+  # Persistence
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClass: "standard"  # Change to your production storage class
+
+  # Resources
+  resources:
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+    requests:
+      cpu: "1000m"
+      memory: "2Gi"
+
+  # Heap settings
+  heapOpts: "-Xmx2048m -Xms2048m"
+
+  # Auto-create topics
+  provisioning:
+    enabled: true
+    topics:
+      - name: tidb-cdc-events
+        partitions: 12
+        replicationFactor: 3
+        config:
+          retention.ms: "604800000"  # 7 days
+          compression.type: "snappy"
+          min.insync.replicas: "2"
+
+  # Service
+  service:
+    type: ClusterIP
+
+  # Metrics for Prometheus
+  metrics:
+    kafka:
+      enabled: true
+    jmx:
+      enabled: true
+
+# Monitoring Stack Configuration
+monitoring:
+  enabled: true
+
+kube-prometheus-stack:
+  # Prometheus configuration
+  prometheus:
+    prometheusSpec:
+      retention: 15d
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: "standard"  # Change to your production storage class
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 50Gi
+
+      # Resources
+      resources:
+        requests:
+          cpu: "1000m"
+          memory: "2Gi"
+        limits:
+          cpu: "2000m"
+          memory: "4Gi"
+
+  # Grafana configuration
+  grafana:
+    enabled: true
+    adminPassword: "changeme"  # Change this!
+
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClassName: "standard"  # Change to your production storage class
+
+    # Install useful dashboards
+    dashboardProviders:
+      dashboardproviders.yaml:
+        apiVersion: 1
+        providers:
+          - name: 'default'
+            orgId: 1
+            folder: ''
+            type: file
+            disableDeletion: false
+            editable: true
+            options:
+              path: /var/lib/grafana/dashboards/default
+
+    dashboardsConfigMaps:
+      default: tidb-grafana-dashboards
+
+  # AlertManager configuration
+  alertmanager:
+    enabled: false
+    alertmanagerSpec:
+      storage:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: "standard"  # Change to your production storage class
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 10Gi
+
+# TiDB Cluster Configuration
+tidbCluster:
+  enabled: true
+  version: v7.5.0
+  timezone: UTC
+  pvReclaimPolicy: Retain
+
+  pd:
+    replicas: 3
+    storage: 10Gi
+    storageClassName: "standard"  # Change to your production storage class
+
+  tikv:
+    replicas: 3
+    storage: 100Gi
+    storageClassName: "standard"  # Change to your production storage class
+
+  tidb:
+    replicas: 3
+    serviceType: ClusterIP
+
+  ticdc:
+    replicas: 3
+
+# Consumer Application Settings (for our custom chart)
+consumer:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: your-registry/tidb-consumer  # Change this!
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+
+  # Consumer configuration
+  config:
+    kafka:
+      brokers: "tidb-pipeline-prod-kafka:9092"
+      topic: "tidb-cdc-events"
+      consumerGroup: "tidb-consumer-group"
+    elasticsearch:
+      host: "elasticsearch-master"
+      port: 9200
+      protocol: "https"
+      index: "tidb-events"
+    batchSize: 1000
+    flushInterval: 5000

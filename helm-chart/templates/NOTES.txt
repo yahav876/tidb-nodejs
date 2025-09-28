@@ -2,11 +2,30 @@ Thank you for installing {{ .Chart.Name }}!
 
 Your release is named {{ .Release.Name }} and installed in namespace {{ .Release.Namespace }}.
 
+{{- if .Values.tidbCluster.enabled }}
+========================================
+⚠️  IMPORTANT: TiDB Operator Setup
+========================================
+
+{{- if .Values.tidbOperator.enabled }}
+✓ TiDB Operator will be deployed as part of this chart
+{{- else }}
+⚠️  TiDB Operator is NOT included. Make sure TiDB Operator is already installed in your cluster.
+{{- end }}
+
+✓ TiDB Cluster will be deployed via TiDB Operator CRDs
+
+If you encounter CRD errors, install TiDB Operator CRDs manually:
+  kubectl create -f https://raw.githubusercontent.com/pingcap/tidb-operator/v1.5.2/manifests/crd.yaml
+
+========================================
+{{- end }}
+
 ## Components Status
 
 TiDB Data Pipeline components deployed:
-{{- if .Values.tidb.enabled }}
-  ✓ TiDB Cluster (PD, TiKV, TiDB, TiCDC)
+{{- if .Values.tidbCluster.enabled }}
+  ✓ TiDB Cluster (via TiDB Operator)
 {{- end }}
 {{- if .Values.kafka.enabled }}
   ✓ Apache Kafka with Zookeeper
@@ -27,16 +46,19 @@ TiDB Data Pipeline components deployed:
 ## Access Information
 
 ### TiDB Database
-{{- if .Values.tidb.enabled }}
-  Connection: {{ include "tidb-data-pipeline.fullname" . }}-tidb:{{ .Values.tidb.tidb.service.port }}
-  {{- if eq .Values.tidb.tidb.service.type "LoadBalancer" }}
+{{- if .Values.tidbCluster.enabled }}
+  Connection: {{ include "tidb-data-pipeline.fullname" . }}-tidb-tidb:{{ .Values.tidbCluster.tidb.service.port | default 4000 }}
+  {{- if eq .Values.tidbCluster.tidb.service.type "LoadBalancer" }}
 
   Get the TiDB external IP:
-    kubectl get svc {{ include "tidb-data-pipeline.fullname" . }}-tidb -n {{ .Release.Namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+    kubectl get svc {{ include "tidb-data-pipeline.fullname" . }}-tidb-tidb -n {{ .Release.Namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
   {{- end }}
 
   Connect using MySQL client:
-    mysql -h <HOST> -P {{ .Values.tidb.tidb.service.port }} -u root {{- if .Values.consumer.env.TIDB_PASSWORD }} -p {{- end }}
+    mysql -h <HOST> -P {{ .Values.tidbCluster.tidb.service.port | default 4000 }} -u root {{- if .Values.consumer.env.TIDB_PASSWORD }} -p {{- end }}
+
+  Check TiDB Cluster status:
+    kubectl get tidbcluster {{ include "tidb-data-pipeline.fullname" . }}-tidb -n {{ .Release.Namespace }}
 {{- end }}
 
 ### Grafana Dashboard
@@ -72,9 +94,9 @@ TiDB Data Pipeline components deployed:
    kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
 
 3. Port forward to access services locally:
-   {{- if .Values.tidb.enabled }}
+   {{- if .Values.tidbCluster.enabled }}
    # TiDB:
-   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "tidb-data-pipeline.fullname" . }}-tidb 4000:{{ .Values.tidb.tidb.service.port }}
+   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "tidb-data-pipeline.fullname" . }}-tidb-tidb 4000:{{ .Values.tidbCluster.tidb.service.port | default 4000 }}
    {{- end }}
    {{- if .Values.grafana.enabled }}
    # Grafana:

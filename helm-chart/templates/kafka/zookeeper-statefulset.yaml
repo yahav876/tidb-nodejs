@@ -9,6 +9,9 @@ metadata:
 spec:
   serviceName: {{ include "tidb-data-pipeline.fullname" . }}-zookeeper-headless
   replicas: {{ .Values.kafka.zookeeper.replicaCount }}
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
   selector:
     matchLabels:
       {{- include "tidb-data-pipeline.componentSelectorLabels" (dict "component" "zookeeper" "context" .) | nindent 6 }}
@@ -29,6 +32,30 @@ spec:
             {{- include "tidb-data-pipeline.containerSecurityContext" . | nindent 12 }}
           image: "{{ .Values.kafka.zookeeper.image.repository }}:{{ .Values.kafka.zookeeper.image.tag }}"
           imagePullPolicy: {{ .Values.kafka.zookeeper.image.pullPolicy }}
+          command:
+            - bash
+            - -c
+            - |
+              set -e
+              export ZOOKEEPER_SERVER_ID=$((${HOSTNAME##*-}+1))
+              echo "Starting Zookeeper with ID: $ZOOKEEPER_SERVER_ID"
+
+              # Create myid file for Zookeeper
+              mkdir -p /var/lib/zookeeper/data
+              echo "$ZOOKEEPER_SERVER_ID" > /var/lib/zookeeper/data/myid
+
+              # Set proper Zookeeper ensemble configuration
+              export ZOOKEEPER_SERVERS=""
+              for i in $(seq 0 $(({{ .Values.kafka.zookeeper.replicaCount }} - 1))); do
+                if [ $i -gt 0 ]; then
+                  ZOOKEEPER_SERVERS="${ZOOKEEPER_SERVERS};"
+                fi
+                ZOOKEEPER_SERVERS="${ZOOKEEPER_SERVERS}{{ include "tidb-data-pipeline.fullname" . }}-zookeeper-${i}.{{ include "tidb-data-pipeline.fullname" . }}-zookeeper-headless.{{ .Release.Namespace }}.svc.cluster.local:2888:3888"
+              done
+              export ZOOKEEPER_SERVERS
+
+              # Start Zookeeper
+              exec /etc/confluent/docker/run
           env:
             - name: ZOOKEEPER_CLIENT_PORT
               value: {{ .Values.kafka.zookeeper.env.ZOOKEEPER_CLIENT_PORT | quote }}
@@ -38,12 +65,14 @@ spec:
               value: {{ .Values.kafka.zookeeper.env.ZOOKEEPER_INIT_LIMIT | quote }}
             - name: ZOOKEEPER_SYNC_LIMIT
               value: {{ .Values.kafka.zookeeper.env.ZOOKEEPER_SYNC_LIMIT | quote }}
-            - name: ZOOKEEPER_SERVER_ID
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.annotations['statefulset.kubernetes.io/pod-name']
-            - name: ZOOKEEPER_SERVERS
-              value: {{ range $i := until (int $.Values.kafka.zookeeper.replicaCount) }}{{ if ne $i 0 }};{{ end }}{{ include "tidb-data-pipeline.fullname" $ }}-zookeeper-{{ $i }}.{{ include "tidb-data-pipeline.fullname" $ }}-zookeeper-headless:2888:3888{{ end }}
+            - name: ZOOKEEPER_AUTOPURGE_SNAP_RETAIN_COUNT
+              value: "3"
+            - name: ZOOKEEPER_AUTOPURGE_PURGE_INTERVAL
+              value: "24"
+            - name: ZOOKEEPER_MAX_CLIENT_CNXNS
+              value: "60"
+            - name: ZOOKEEPER_4LW_COMMANDS_WHITELIST
+              value: "ruok,mntr,srvr,stat"
           ports:
             - name: client
               containerPort: 2181
@@ -60,8 +89,22 @@ spec:
             {{- toYaml .Values.healthChecks.livenessProbe | nindent 12 }}
           readinessProbe:
             exec:
-              command: ['/bin/bash', '-c', 'echo "ruok" | nc localhost 2181 | grep "imok"']
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  echo "ruok" | nc -w 2 localhost 2181 | grep "imok" && \
+                  echo "mntr" | nc -w 2 localhost 2181 | grep "zk_server_state"
             {{- toYaml .Values.healthChecks.readinessProbe | nindent 12 }}
+          startupProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - echo "ruok" | nc -w 2 localhost 2181 | grep "imok"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 10
           {{- include "tidb-data-pipeline.resources" .Values.kafka.zookeeper | nindent 10 }}
           volumeMounts:
             - name: data
@@ -106,6 +149,7 @@ metadata:
 spec:
   type: ClusterIP
   clusterIP: None
+  publishNotReadyAddresses: true
   ports:
     - port: 2181
       targetPort: client

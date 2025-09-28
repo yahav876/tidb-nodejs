@@ -22,16 +22,37 @@ global:
           - ALL
       readOnlyRootFilesystem: false
 
-tidb:
+# TiDB Operator configuration
+tidbOperator:
+  enabled: true
+  operatorImage: pingcap/tidb-operator:v1.6.3
+  scheduler:
+    create: true
+    # Use v1 API for Kubernetes 1.25+
+    kubeSchedulerImageName: registry.k8s.io/kube-scheduler
+    kubeSchedulerImageTag: v1.31.0
+  admissionWebhook:
+    create: true
+
+# TiDB Cluster configuration (using TiDB Operator)
+tidbCluster:
   enabled: true
 
+  version: v7.5.7
+  timezone: UTC
+  pvReclaimPolicy: Retain
+  enableDynamicConfiguration: true
+  configUpdateStrategy: RollingUpdate
+
   pd:
-    enabled: true
-    image:
-      repository: pingcap/pd
-      tag: v7.5.7
-      pullPolicy: IfNotPresent
-    replicaCount: 3
+    baseImage: pingcap/pd
+    version: v7.5.7
+    replicas: 3
+    storage: 10Gi
+    storageClassName: ""  # Uses global.persistence.storageClass if empty
+    service:
+      clientPort: 2379
+      peerPort: 2380
     resources:
       limits:
         cpu: 2
@@ -39,24 +60,19 @@ tidb:
       requests:
         cpu: 500m
         memory: 1Gi
-    persistence:
-      enabled: true
-      size: 10Gi
-    service:
-      type: ClusterIP
-      clientPort: 2379
-      peerPort: 2380
-    podDisruptionBudget:
-      enabled: true
-      minAvailable: 2
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
 
   tikv:
-    enabled: true
-    image:
-      repository: pingcap/tikv
-      tag: v7.5.6-20250903-8ddf40d
-      pullPolicy: IfNotPresent
-    replicaCount: 3
+    baseImage: pingcap/tikv
+    version: v7.5.7
+    replicas: 3
+    storage: 50Gi
+    storageClassName: ""  # Uses global.persistence.storageClass if empty
+    service:
+      port: 20160
+      statusPort: 20180
     resources:
       limits:
         cpu: 4
@@ -64,58 +80,51 @@ tidb:
       requests:
         cpu: 1
         memory: 2Gi
-    persistence:
-      enabled: true
-      size: 50Gi
-    service:
-      type: ClusterIP
-      port: 20160
-    podDisruptionBudget:
-      enabled: true
-      minAvailable: 2
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
 
   tidb:
-    enabled: true
-    image:
-      repository: pingcap/tidb
-      tag: v7.5.7
-      pullPolicy: IfNotPresent
-    replicaCount: 2
-    resources:
-      limits:
-        cpu: 4
-        memory: 8Gi
-      requests:
-        cpu: 1
-        memory: 2Gi
+    baseImage: pingcap/tidb
+    version: v7.5.7
+    replicas: 2
     service:
       type: LoadBalancer
       port: 4000
       statusPort: 10080
-    config:
-      log:
-        level: info
-        format: json
-      performance:
-        maxProcs: 0
-        maxMemory: 0
-        serverMemoryQuota: 0
-        memoryUsageAlarmRatio: 0.8
-      preparedPlanCache:
-        enabled: true
-        capacity: 1000
-        memoryGuardRatio: 0.1
-    podDisruptionBudget:
-      enabled: true
-      minAvailable: 1
+      annotations: {}
+    logLevel: info
+    resources:
+      limits:
+        cpu: 4
+        memory: 8Gi
+      requests:
+        cpu: 1
+        memory: 2Gi
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+
+  tiflash:
+    enabled: false
+    baseImage: pingcap/tiflash
+    replicas: 0
+    storage: 100Gi
+    resources:
+      limits:
+        cpu: 8
+        memory: 16Gi
+      requests:
+        cpu: 2
+        memory: 4Gi
 
   ticdc:
     enabled: true
-    image:
-      repository: pingcap/ticdc
-      tag: v7.5.7
-      pullPolicy: IfNotPresent
-    replicaCount: 2
+    baseImage: pingcap/ticdc
+    version: v7.5.7
+    replicas: 2
+    service:
+      port: 8301
     resources:
       limits:
         cpu: 2
@@ -123,14 +132,51 @@ tidb:
       requests:
         cpu: 500m
         memory: 1Gi
-    service:
-      type: ClusterIP
-      port: 8300
-    config:
-      logLevel: info
-    podDisruptionBudget:
-      enabled: true
-      minAvailable: 1
+
+  initializer:
+    image: tnir/mysqlclient:8.0.33
+    createDatabase: true
+    initPassword: false
+    initSql: |
+      CREATE DATABASE IF NOT EXISTS testdb;
+      USE testdb;
+      CREATE TABLE IF NOT EXISTS users (
+          id INT PRIMARY KEY AUTO_INCREMENT,
+          username VARCHAR(50) NOT NULL,
+          email VARCHAR(100) NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_username (username),
+          INDEX idx_email (email),
+          INDEX idx_created_at (created_at)
+      );
+      CREATE TABLE IF NOT EXISTS products (
+          id INT PRIMARY KEY AUTO_INCREMENT,
+          name VARCHAR(100) NOT NULL,
+          description TEXT,
+          price DECIMAL(10, 2) NOT NULL,
+          stock_quantity INT NOT NULL DEFAULT 0,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_name (name),
+          INDEX idx_price (price)
+      );
+      CREATE TABLE IF NOT EXISTS orders (
+          id INT PRIMARY KEY AUTO_INCREMENT,
+          user_id INT NOT NULL,
+          product_id INT NOT NULL,
+          quantity INT NOT NULL,
+          total_amount DECIMAL(10, 2) NOT NULL,
+          status ENUM('pending', 'processing', 'completed', 'cancelled') DEFAULT 'pending',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users(id),
+          FOREIGN KEY (product_id) REFERENCES products(id),
+          INDEX idx_user_id (user_id),
+          INDEX idx_product_id (product_id),
+          INDEX idx_status (status),
+          INDEX idx_created_at (created_at)
+      );
 
 kafka:
   enabled: true
@@ -342,7 +388,7 @@ consumer:
       memory: 512Mi
   env:
     KAFKA_BROKERS: "kafka-0:9092,kafka-1:9092,kafka-2:9092"
-    TIDB_HOST: "tidb"
+    TIDB_HOST: ""  # Will be dynamically set in deployment to use TiDB Operator service
     TIDB_PORT: "4000"
     TIDB_USER: "root"
     TIDB_PASSWORD: ""

@@ -1,0 +1,25 @@
+{{- if .Values.tidbCluster.enabled }}
+apiVersion: pingcap.com/v1alpha1
+kind: TidbInitializer
+metadata:
+  name: {{ include "tidb-data-pipeline.fullname" . }}-tidb-init
+  labels:
+    {{- include "tidb-data-pipeline.labels" . | nindent 4 }}
+spec:
+  cluster:
+    name: {{ include "tidb-data-pipeline.fullname" . }}-tidb
+    namespace: {{ .Release.Namespace }}
+
+  image: {{ .Values.tidbCluster.initializer.image | default "tnir/mysqlclient:8.0.33" }}
+
+  {{- if .Values.tidbCluster.initializer.createDatabase }}
+  initSql: |
+{{ .Values.tidbCluster.initializer.initSql | indent 4 }}
+  {{- end }}
+
+  {{- if .Values.tidbCluster.initializer.initPassword }}
+  initPassword:
+    secretName: {{ include "tidb-data-pipeline.fullname" . }}-tidb-secret
+    secretKey: root-password
+  {{- end }}
+{{- end }}

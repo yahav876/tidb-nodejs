@@ -21,4 +21,8 @@ sources:
   - https://github.com/pingcap/tidb
   - https://github.com/apache/kafka
   - https://github.com/elastic/elasticsearch
-dependencies: []
+dependencies:
+  - name: tidb-operator
+    version: v1.6.3
+    repository: https://charts.pingcap.org/
+    condition: tidbOperator.enabled
