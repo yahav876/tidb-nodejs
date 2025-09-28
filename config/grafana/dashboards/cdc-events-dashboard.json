@@ -78,7 +78,7 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "sum by (operation_type) (increase(tidb_cdc_events_total{operation_type=~\"insert|update|delete\"}[1h]))",
+          "expr": "sum by (operation_type) (tidb_cdc_events_total{table_name=\"users\",operation_type=~\"insert|update|delete\"})",
           "format": "time_series",
           "instant": true,
           "legendFormat": "{{operation_type}}",
